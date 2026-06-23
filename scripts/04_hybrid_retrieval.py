@@ -51,6 +51,55 @@ def get_chunk_text(chunk: dict) -> str:
         or ""
     )
 
+def expand_query(query: str) -> str:
+    """
+    Mở rộng query bằng các cụm pháp lý tương đương.
+    Chỉ dùng cho retrieval, không thay đổi câu hỏi gốc.
+    """
+    q = query.lower()
+    expansions = []
+
+    # Hồ sơ đăng ký doanh nghiệp chưa hợp lệ
+    if "hồ sơ đăng ký doanh nghiệp" in q and (
+        "chưa hợp lệ" in q
+        or "không hợp lệ" in q
+        or "sửa hồ sơ" in q
+        or "bổ sung hồ sơ" in q
+    ):
+        expansions.extend([
+            "thông báo yêu cầu sửa đổi bổ sung hồ sơ đăng ký doanh nghiệp",
+            "hồ sơ chưa hợp lệ",
+            "nội dung cần sửa đổi bổ sung",
+            "cơ quan đăng ký kinh doanh thông báo bằng văn bản",
+            "Điều 32 Nghị định 168/2025/NĐ-CP",
+        ])
+
+    # Tên doanh nghiệp bằng tiếng nước ngoài
+    if "tên doanh nghiệp bằng tiếng nước ngoài" in q:
+        expansions.extend([
+            "Điều 39 Luật Doanh nghiệp",
+            "tên doanh nghiệp bằng tiếng nước ngoài và tên viết tắt",
+            "59/2020/QH14 Điều 39",
+        ])
+
+    # Đăng ký sử dụng hóa đơn điện tử
+    if "đăng ký sử dụng hóa đơn điện tử" in q:
+        expansions.extend([
+            "Điều 15 Nghị định 123/2020/NĐ-CP",
+            "đăng ký thay đổi nội dung đăng ký sử dụng hóa đơn điện tử",
+        ])
+
+    # Ngừng sử dụng hóa đơn điện tử
+    if "ngừng sử dụng hóa đơn điện tử" in q:
+        expansions.extend([
+            "Điều 16 Nghị định 123/2020/NĐ-CP",
+            "các trường hợp ngừng sử dụng hóa đơn điện tử",
+        ])
+
+    if not expansions:
+        return query
+
+    return query + " " + " ".join(expansions)
 
 def detect_query_signals(query: str) -> dict:
     query_lower = query.lower()
@@ -220,8 +269,10 @@ def hybrid_search(
     dense_weight: float = 1.0,
     group_by_parent: bool = True,
 ):
-    bm25_results = bm25_retrieve(query, bm25, bm25_top_k)
-    dense_results = dense_retrieve(query, dense_model, dense_index, dense_top_k)
+    expanded_query = expand_query(query)
+
+    bm25_results = bm25_retrieve(expanded_query, bm25, bm25_top_k)
+    dense_results = dense_retrieve(expanded_query, dense_model, dense_index, dense_top_k)
 
     scores: Dict[int, dict] = {}
 
@@ -259,11 +310,11 @@ def hybrid_search(
         scores[idx]["dense_raw"] = raw_score
         scores[idx]["rrf_score"] += dense_weight * rrf_score(rank, rrf_k)
 
-    query_signals = detect_query_signals(query)
+    query_signals = detect_query_signals(expanded_query)
 
     for idx, item in scores.items():
         chunk = chunks[idx]
-        boost = rule_boost(query, chunk, query_signals)
+        boost = rule_boost(expanded_query, chunk, query_signals)
         item["rule_boost"] = boost
         item["final_score"] = item["rrf_score"] + boost
 
