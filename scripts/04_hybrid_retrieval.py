@@ -159,9 +159,15 @@ def rule_boost(query: str, chunk: dict, query_signals: dict) -> float:
 
     title_lower = f"{citation} {retrieval_title}".lower()
 
+    domain_matched = False
+
     for term in important_terms:
         if term in query_lower and term in title_lower:
-            boost += 0.8
+            domain_matched = True
+            break
+
+    if domain_matched:
+        boost += 0.05
 
     return boost
 
