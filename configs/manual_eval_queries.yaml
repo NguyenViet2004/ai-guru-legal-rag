@@ -1,0 +1,64 @@
+queries:
+  - id: q001
+    question: "Hồ sơ đăng ký doanh nghiệp bằng tiếng nước ngoài có cần dịch công chứng không?"
+    expected_any:
+      - "168/2025/NĐ-CP|Điều 10"
+
+  - id: q002
+    question: "Tài liệu tiếng Anh trong hồ sơ thành lập công ty có phải dịch sang tiếng Việt không?"
+    expected_any:
+      - "168/2025/NĐ-CP|Điều 10"
+
+  - id: q003
+    question: "Người lao động bị sa thải trong trường hợp nào?"
+    expected_any:
+      - "45/2019/QH14|Điều 125"
+
+  - id: q004
+    question: "Doanh nghiệp sử dụng hóa đơn điện tử khi bán hàng hóa, cung cấp dịch vụ khi nào?"
+    expected_any:
+      - "38/2019/QH14|Điều 91"
+      - "38/2019/QH14|Điều 90"
+      - "123/2020/NĐ-CP|Điều 13"
+
+  - id: q005
+    question: "Doanh nghiệp đăng ký sử dụng hóa đơn điện tử như thế nào?"
+    expected_any:
+      - "123/2020/NĐ-CP|Điều 15"
+
+  - id: q006
+    question: "Khi nào doanh nghiệp bị ngừng sử dụng hóa đơn điện tử?"
+    expected_any:
+      - "123/2020/NĐ-CP|Điều 16"
+
+  - id: q007
+    question: "Quy định về xử lý dữ liệu cá nhân của doanh nghiệp là gì?"
+    expected_any:
+      - "356/2025/NĐ-CP|Điều 23"
+      - "13/2023/NĐ-CP|Điều 39"
+      - "13/2023/NĐ-CP|Điều 3"
+
+  - id: q008
+    question: "Nguyên tắc bảo vệ dữ liệu cá nhân gồm những gì?"
+    expected_any:
+      - "13/2023/NĐ-CP|Điều 3"
+
+  - id: q009
+    question: "Tên doanh nghiệp bằng tiếng nước ngoài được quy định như thế nào?"
+    expected_any:
+      - "59/2020/QH14|Điều 39"
+
+  - id: q010
+    question: "Doanh nghiệp phải đăng ký thay đổi nội dung giấy chứng nhận đăng ký doanh nghiệp trong thời hạn bao lâu?"
+    expected_any:
+      - "59/2020/QH14|Điều 30"
+
+  - id: q011
+    question: "Có được ủy quyền cho người khác thực hiện thủ tục đăng ký doanh nghiệp không?"
+    expected_any:
+      - "168/2025/NĐ-CP|Điều 12"
+
+  - id: q012
+    question: "Khi hồ sơ đăng ký doanh nghiệp chưa hợp lệ thì cơ quan đăng ký kinh doanh xử lý thế nào?"
+    expected_any:
+      - "168/2025/NĐ-CP|Điều 32"
