@@ -223,10 +223,20 @@ def main():
     print("[INFO] Extract dir  :", extract_dir)
     print("[INFO] Artifact dir :", artifact_dir)
 
-    zip_path = find_zip_file(input_dir)
-    extract_zip(zip_path, extract_dir)
+    # Case 1: Kaggle dataset đã được giải nén sẵn và có file jsonl trực tiếp
+    direct_chunk_candidates = list(input_dir.rglob(args.chunk_file_name))
 
-    chunk_path = find_chunk_file(extract_dir, args.chunk_file_name)
+    if direct_chunk_candidates:
+        print("[INFO] Dataset đã được giải nén sẵn. Không cần tìm file zip.")
+        chunk_path = direct_chunk_candidates[0]
+        zip_path = None
+    else:
+        # Case 2: Input là file zip, cần giải nén trước
+        zip_path = find_zip_file(input_dir)
+        extract_zip(zip_path, extract_dir)
+
+        chunk_path = find_chunk_file(extract_dir, args.chunk_file_name)
+
     print("[INFO] Chunk path:", chunk_path)
 
     chunks = load_jsonl(chunk_path)
