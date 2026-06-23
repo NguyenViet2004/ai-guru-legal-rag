@@ -1,0 +1,12 @@
+rank-bm25
+sentence-transformers
+faiss-cpu
+numpy
+pandas
+tqdm
+pyyaml
+scikit-learn
+underthesea
+transformers
+accelerate
+datasets

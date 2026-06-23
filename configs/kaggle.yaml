@@ -1,0 +1,24 @@
+data:
+  input_dir: /kaggle/input/ai-guru-legal-chunk-v3
+  work_dir: /kaggle/working
+  extract_dir: /kaggle/working/chunk_v3_data
+  artifact_dir: /kaggle/working/artifacts
+
+files:
+  chunk_file_name: legal_chunks_final.jsonl
+
+retrieval:
+  bm25_top_k: 200
+  dense_top_k: 200
+  rerank_top_k: 100
+  final_top_k: 15
+  group_by_parent_article: true
+
+embedding:
+  model_name: BAAI/bge-m3
+  batch_size: 16
+  normalize_embeddings: true
+
+reranker:
+  model_name: BAAI/bge-reranker-v2-m3
+  batch_size: 8
