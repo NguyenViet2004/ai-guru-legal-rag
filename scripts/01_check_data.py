@@ -243,7 +243,7 @@ def main():
     report = validate_chunks(chunks)
 
     report["chunk_path"] = str(chunk_path)
-    report["zip_path"] = str(zip_path)
+    report["zip_path"] = str(zip_path) if zip_path else None
 
     print_report(report)
 
