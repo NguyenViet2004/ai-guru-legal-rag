@@ -132,15 +132,15 @@ def rule_boost(query: str, chunk: dict, query_signals: dict) -> float:
     # Boost nếu query nêu rõ số hiệu văn bản
     for doc_num in query_signals["document_numbers"]:
         if doc_num and doc_num in combined_refs:
-            boost += 2.5
+            boost += 0.30
 
     # Boost nếu query nêu rõ Điều
     for article in query_signals["articles"]:
         if article and article == article_number:
-            boost += 1.5
+            boost += 0.20
 
         if f"ĐIỀU {article.upper()}" in combined_refs:
-            boost += 1.0
+            boost += 0.10
 
     # Boost nhẹ nếu title/citation chứa nhiều từ khóa domain rõ
     important_terms = [
