@@ -54,9 +54,21 @@ def clean_doc_title(title: str, doc_no: str = "") -> str:
     title = " ".join(str(title).split()).strip()
 
     if doc_no:
-        title = re.sub(rf"\b{safere(doc_no)}\b", "", title, flags=re.IGNORECASE)
+        # Chỉ xóa cụm "số <mã văn bản>", không xóa chữ "số" trong "một số điều"
+        title = re.sub(
+            rf"\s+số\s+{safere(doc_no)}\b",
+            " ",
+            title,
+            flags=re.IGNORECASE,
+        )
 
-    title = re.sub(r"\bsố\b", "", title, flags=re.IGNORECASE)
+        title = re.sub(
+            rf"\b{safere(doc_no)}\b",
+            " ",
+            title,
+            flags=re.IGNORECASE,
+        )
+
     title = re.sub(r"\s+", " ", title).strip(" -|")
 
     return title
@@ -226,28 +238,31 @@ def make_relevant_fields(contexts: list[dict], lookup: dict, max_docs: int, max_
 def is_complex_question(question: str) -> bool:
     q = question.lower()
 
+    # Tránh hiểu nhầm cụm "doanh nghiệp nhỏ và vừa" là câu nhiều vế
+    q_norm = q.replace("doanh nghiệp nhỏ và vừa", "dnnvv")
+    q_norm = q_norm.replace("nhỏ và vừa", "dnnvv")
+
     complex_signals = [
         "đồng thời",
         "khác gì",
         "khác nhau",
         "so với",
-        "vừa",
         "cùng với",
         "một mặt",
         "mặt khác",
         "và nếu",
         "và khi",
-        "thì ... và",
+        "trong trường hợp",
     ]
 
-    if len(q) >= 180:
+    if len(q_norm) >= 220:
         return True
 
-    if any(signal in q for signal in complex_signals):
+    if any(signal in q_norm for signal in complex_signals):
         return True
 
-    # Câu có nhiều vế pháp lý, thường cần nhiều điều luật
-    if q.count(" và ") >= 2:
+    # Chỉ xem là phức tạp nếu còn rất nhiều vế "và"
+    if q_norm.count(" và ") >= 3:
         return True
 
     return False

@@ -95,6 +95,47 @@ def expand_query(query: str) -> str:
             "Điều 16 Nghị định 123/2020/NĐ-CP",
             "các trường hợp ngừng sử dụng hóa đơn điện tử",
         ])
+        
+        if (
+        ("cơ sở ươm tạo" in q or "ươm tạo" in q)
+        and ("khu làm việc chung" in q or "làm việc chung" in q)
+    ):
+        expansions.extend([
+            "Luật Hỗ trợ doanh nghiệp nhỏ và vừa",
+            "04/2017/QH14 Điều 12",
+            "hỗ trợ cơ sở ươm tạo cơ sở kỹ thuật khu làm việc chung",
+            "hỗ trợ thuế đất đai cơ sở ươm tạo khu làm việc chung",
+        ])
+
+    if "giữ bản chính" in q and ("bằng cấp" in q or "văn bằng" in q or "chứng chỉ" in q):
+        expansions.extend([
+            "Nghị định 12/2022/NĐ-CP Điều 9",
+            "giữ bản chính giấy tờ tùy thân văn bằng chứng chỉ của người lao động",
+            "buộc trả lại bản chính giấy tờ tùy thân văn bằng chứng chỉ",
+            "vi phạm giao kết hợp đồng lao động",
+        ])
+
+    if (
+        "số lao động tham gia bảo hiểm xã hội bình quân năm" in q
+        and ("doanh nghiệp nhỏ và vừa" in q or "nhỏ và vừa" in q)
+    ):
+        expansions.extend([
+            "Luật Hỗ trợ doanh nghiệp nhỏ và vừa 04/2017/QH14 Điều 4",
+            "tiêu chí doanh nghiệp nhỏ và vừa số lao động tham gia bảo hiểm xã hội bình quân năm không quá 200 người",
+        ])
+
+    if "quỹ bảo lãnh tín dụng" in q and ("điều kiện" in q or "cấp bảo lãnh" in q):
+        expansions.extend([
+            "Nghị định 34/2018/NĐ-CP Điều 15",
+            "điều kiện cấp bảo lãnh tín dụng cho doanh nghiệp nhỏ và vừa",
+        ])
+
+    if "bộ tài chính" in q and "doanh nghiệp siêu nhỏ" in q:
+        expansions.extend([
+            "Luật Hỗ trợ doanh nghiệp nhỏ và vừa 04/2017/QH14 Điều 23",
+            "Bộ Tài chính hướng dẫn thuế kế toán doanh nghiệp siêu nhỏ",
+            "Thông tư 132/2018/TT-BTC chế độ kế toán doanh nghiệp siêu nhỏ",
+        ])
 
     if not expansions:
         return query
