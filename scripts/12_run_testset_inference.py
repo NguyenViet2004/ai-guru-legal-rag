@@ -403,169 +403,79 @@ def load_existing_outputs(output_file: Path):
     return {}
 
 def apply_answer_guard(question: str, answer: str, relevant_articles: list[str]) -> str:
+    """
+    Guard tổng quát:
+    - Không tự viết câu trả lời pháp lý mới.
+    - Chỉ sửa các lỗi hình thức/rủi ro rõ ràng.
+    - Phần căn cứ đầy đủ sẽ do ensure_full_citations_in_answer() xử lý sau.
+    """
     q = question.lower()
+    ans = answer.strip()
+    ans_lower = ans.lower()
     refs_text = "\n".join(relevant_articles)
 
-    # Case 1: giữ bản chính văn bằng/chứng chỉ
+    # Nếu câu hỏi hỏi Có/Không mà answer không bắt đầu rõ ràng,
+    # thêm mở đầu nhẹ dựa trên nội dung answer, không tự thêm căn cứ mới.
+    yes_no_markers = [
+        "có bị",
+        "có phải",
+        "có được",
+        "có cần",
+        "được không",
+        "phải không",
+    ]
+
+    if any(m in q for m in yes_no_markers):
+        if not ans_lower.startswith(("có", "không")):
+            if any(x in ans_lower for x in ["bị phạt", "bị xử phạt", "vi phạm", "phải", "cần"]):
+                ans = "Có. " + ans[0].lower() + ans[1:]
+            elif any(x in ans_lower for x in ["không bắt buộc", "không phải", "không cần"]):
+                ans = "Không. " + ans[0].lower() + ans[1:]
+
+    # Nếu hỏi mức phạt/mức hỗ trợ/thời hạn mà answer không có số,
+    # không bịa số, chỉ cảnh báo theo căn cứ.
+    numeric_question_markers = [
+        "bao nhiêu",
+        "mức phạt",
+        "mức hỗ trợ",
+        "tối đa",
+        "thời hạn",
+        "trong bao lâu",
+        "bao lâu",
+        "tỷ lệ",
+        "%",
+    ]
+
+    if any(m in q for m in numeric_question_markers):
+        has_number = bool(re.search(r"\d|%|phần trăm", ans_lower))
+        if not has_number:
+            ans += (
+                "\n\nLưu ý: Câu hỏi yêu cầu con số hoặc thời hạn cụ thể; "
+                "cần đối chiếu trực tiếp căn cứ pháp lý được trích dẫn để xác định chính xác."
+            )
+
+    # Nếu hỏi biện pháp khắc phục mà answer thiếu từ khóa khắc phục,
+    # thêm câu nhắc chung, không bịa biện pháp cụ thể.
+    if any(m in q for m in ["khắc phục", "biện pháp khắc phục"]):
+        if not any(m in ans_lower for m in ["khắc phục", "buộc", "trả lại", "nộp lại", "hoàn thành thủ tục"]):
+            ans += (
+                "\n\nNgoài hình thức xử phạt, cần xem thêm biện pháp khắc phục hậu quả "
+                "được quy định tại căn cứ pháp lý tương ứng."
+            )
+
+    # Nếu câu hỏi hỏi xử phạt nhưng answer kết luận không vi phạm,
+    # trong khi căn cứ là nghị định xử phạt, làm mềm kết luận.
     if (
-        "giữ bản chính" in q
-        and (
-            "bằng cấp" in q
-            or "văn bằng" in q
-            or "chứng chỉ" in q
-        )
+        any(m in q for m in ["có bị phạt", "bị xử phạt", "xử lý như thế nào"])
         and "12/2022/NĐ-CP" in refs_text
-        and "Điều 9" in refs_text
+        and ans_lower.startswith("không")
     ):
-        return (
-            "Công ty không được giữ bản chính giấy tờ tùy thân, văn bằng, chứng chỉ của người lao động "
-            "khi giao kết hoặc thực hiện hợp đồng lao động. Nếu vi phạm, công ty bị xử phạt theo quy định "
-            "về vi phạm giao kết hợp đồng lao động; đồng thời phải khắc phục bằng cách trả lại bản chính "
-            "giấy tờ, văn bằng, chứng chỉ đã giữ cho người lao động.\n\n"
-            "Căn cứ pháp lý:\n"
-            "- 12/2022/NĐ-CP|Điều 9"
+        ans = (
+            "Cần đối chiếu hành vi cụ thể với căn cứ xử phạt được trích dẫn. "
+            + ans
         )
 
-    # Case 2: chậm đóng BHXH bắt buộc
-    if (
-        "chậm đóng" in q
-        and "bảo hiểm xã hội" in q
-        and "12/2022/NĐ-CP" in refs_text
-        and "Điều 39" in refs_text
-    ):
-        return (
-            "Công ty chậm đóng bảo hiểm xã hội bắt buộc cho người lao động sẽ bị xử phạt theo quy định "
-            "về vi phạm đóng bảo hiểm xã hội bắt buộc, bảo hiểm thất nghiệp. Mức phạt được xác định theo "
-            "tỷ lệ trên tổng số tiền bảo hiểm xã hội bắt buộc, bảo hiểm thất nghiệp phải đóng tại thời điểm "
-            "lập biên bản vi phạm. Ngoài tiền phạt, công ty còn phải khắc phục bằng cách đóng đủ số tiền "
-            "bảo hiểm xã hội bắt buộc còn thiếu và nộp khoản tiền lãi chậm đóng theo quy định.\n\n"
-            "Căn cứ pháp lý:\n"
-            "- 12/2022/NĐ-CP|Điều 39"
-        )
-
-    # Case 3: hỗ trợ tư vấn DNNVV
-    if (
-        "hỗ trợ tư vấn" in q
-        and "mức hỗ trợ" in q
-        and "80/2021/NĐ-CP" in refs_text
-        and "Điều 13" in refs_text
-    ):
-        return (
-            "Doanh nghiệp nhỏ và vừa được hỗ trợ tư vấn thông qua mạng lưới tư vấn viên. "
-            "Mức hỗ trợ được xác định theo quy mô doanh nghiệp: doanh nghiệp siêu nhỏ được hỗ trợ "
-            "100% giá trị hợp đồng tư vấn nhưng không quá 50 triệu đồng/năm/doanh nghiệp; "
-            "doanh nghiệp nhỏ được hỗ trợ tối đa 50% giá trị hợp đồng tư vấn nhưng không quá "
-            "100 triệu đồng/năm/doanh nghiệp; doanh nghiệp vừa được hỗ trợ tối đa 30% giá trị "
-            "hợp đồng tư vấn nhưng không quá 150 triệu đồng/năm/doanh nghiệp.\n\n"
-            "Căn cứ pháp lý:\n"
-            "- 80/2021/NĐ-CP|Điều 13"
-        )
-
-        # Case 4: chi phí tư vấn viên, tránh nhầm sang học viên
-    if (
-        "chi phí" in q
-        and "tư vấn viên" in q
-        and "52/2023/TT-BTC" in refs_text
-    ):
-        return (
-            "Chi phí của tư vấn viên được chi trả theo nội dung hỗ trợ tư vấn và hợp đồng tư vấn được phê duyệt. "
-            "Khoản chi này là chi phí phục vụ hoạt động tư vấn cho doanh nghiệp nhỏ và vừa, không phải học phí, "
-            "chi phí tài liệu học tập, đi lại, ăn ở của học viên. Khi thanh toán, doanh nghiệp và đơn vị hỗ trợ "
-            "phải thực hiện theo hợp đồng, nội dung hỗ trợ, định mức và chứng từ hợp lệ theo quy định về sử dụng "
-            "kinh phí ngân sách nhà nước hỗ trợ doanh nghiệp nhỏ và vừa.\n\n"
-            "Căn cứ pháp lý:\n"
-            "- 52/2023/TT-BTC|Điều 7"
-        )
-
-    # Case 5: không tổ chức khám sức khỏe định kỳ
-    if (
-        "không tổ chức khám sức khỏe định kỳ" in q
-        or ("khám sức khỏe định kỳ" in q and ("xử phạt" in q or "bị phạt" in q))
-    ):
-        return (
-            "Có. Nếu công ty không tổ chức khám sức khỏe định kỳ hoặc khám phát hiện bệnh nghề nghiệp cho người lao động "
-            "theo quy định thì bị xử phạt. Mức phạt đối với người sử dụng lao động là từ 1.000.000 đồng đến "
-            "3.000.000 đồng đối với mỗi người lao động bị vi phạm, nhưng tối đa không quá 75.000.000 đồng. "
-            "Đối với tổ chức, mức phạt tiền thường được áp dụng gấp đôi mức phạt đối với cá nhân theo nguyên tắc xử phạt hành chính.\n\n"
-            "Căn cứ pháp lý:\n"
-            "- 12/2022/NĐ-CP|Điều 22"
-        )
-
-    # Case 6: hình thức xử phạt chính
-    if (
-        "hình thức xử phạt chính" in q
-        and ("lao động" in q or "bảo hiểm xã hội" in q)
-    ):
-        return (
-            "Khi vi phạm hành chính trong lĩnh vực lao động, bảo hiểm xã hội và người lao động Việt Nam đi làm việc "
-            "ở nước ngoài theo hợp đồng, công ty có thể bị áp dụng hình thức xử phạt chính là cảnh cáo hoặc phạt tiền. "
-            "Các biện pháp khắc phục hậu quả chỉ là biện pháp đi kèm, không phải hình thức xử phạt chính.\n\n"
-            "Căn cứ pháp lý:\n"
-            "- 12/2022/NĐ-CP|Điều 3"
-        )
-
-    # Case 7: không trả sổ BHXH
-    if (
-        "không trả sổ bảo hiểm xã hội" in q
-        or "không trả sổ bhxh" in q
-        or ("sổ bảo hiểm xã hội" in q and "chấm dứt hợp đồng" in q)
-    ):
-        return (
-            "Có. Khi chấm dứt hợp đồng lao động, công ty phải hoàn thành thủ tục xác nhận thời gian đóng bảo hiểm xã hội "
-            "và trả lại sổ bảo hiểm xã hội cùng các giấy tờ khác đã giữ của người lao động. Nếu không thực hiện, công ty "
-            "có thể bị xử phạt về vi phạm quy định khi chấm dứt hợp đồng lao động và phải khắc phục bằng cách hoàn thành "
-            "thủ tục xác nhận, trả lại sổ bảo hiểm xã hội và giấy tờ liên quan cho người lao động.\n\n"
-            "Căn cứ pháp lý:\n"
-            "- 12/2022/NĐ-CP|Điều 12"
-        )
-
-    # Case 8: công đoàn cấp trên vào doanh nghiệp
-    if (
-        "cán bộ công đoàn" in q
-        and ("tuyên truyền" in q or "thành lập công đoàn" in q)
-    ):
-        return (
-            "Có rủi ro bị xử lý nếu công ty cản trở công đoàn cấp trên trực tiếp cơ sở thực hiện quyền tuyên truyền, "
-            "vận động, hướng dẫn người lao động gia nhập và thành lập công đoàn cơ sở. Công ty không nên từ chối hoặc "
-            "cản trở trái quy định; cần tạo điều kiện để công đoàn thực hiện quyền, trách nhiệm theo luật. Trường hợp "
-            "hành vi bị xác định là cản trở quyền thành lập, gia nhập, hoạt động công đoàn thì có thể bị xử phạt theo "
-            "quy định về bảo đảm thực hiện quyền của tổ chức đại diện người lao động tại cơ sở.\n\n"
-            "Căn cứ pháp lý:\n"
-            "- 50/2024/QH15|Điều 19\n"
-            "- 12/2022/NĐ-CP|Điều 35"
-        )
-
-    # Case 9: hóa đơn điện tử không có mã
-    if (
-        "hóa đơn điện tử không có mã" in q
-        or "không có mã của cơ quan thuế" in q
-    ):
-        return (
-            "Công ty được sử dụng hóa đơn điện tử không có mã của cơ quan thuế khi thuộc đối tượng được sử dụng loại hóa đơn này "
-            "và đáp ứng điều kiện về giao dịch điện tử, hạ tầng công nghệ thông tin, phần mềm kế toán, phần mềm lập hóa đơn điện tử "
-            "và khả năng truyền dữ liệu hóa đơn điện tử đến cơ quan thuế. Không nên nhầm điều kiện sử dụng hóa đơn điện tử không có mã "
-            "với trường hợp doanh nghiệp được miễn phí dịch vụ hóa đơn điện tử có mã của cơ quan thuế.\n\n"
-            "Căn cứ pháp lý:\n"
-            "- 38/2019/QH14|Điều 91\n"
-            "- 123/2020/NĐ-CP|Điều 18"
-        )
-
-    # Case 10: hóa đơn sai tên hoặc địa chỉ người mua
-    if (
-        "hóa đơn điện tử" in q
-        and ("sai tên" in q or "sai địa chỉ" in q)
-        and "người mua" in q
-    ):
-        return (
-            "Nếu hóa đơn điện tử đã gửi cho khách hàng chỉ sai tên hoặc địa chỉ người mua, nhưng không sai mã số thuế "
-            "và các nội dung khác không sai, công ty thông báo cho người mua về việc hóa đơn có sai sót và không phải "
-            "lập lại hóa đơn. Trường hợp có sai sót khác thì thực hiện điều chỉnh hoặc thay thế hóa đơn theo quy định "
-            "về xử lý hóa đơn điện tử có sai sót.\n\n"
-            "Căn cứ pháp lý:\n"
-            "- 123/2020/NĐ-CP|Điều 19"
-        )
-    
-    return answer
+    return ans
 
 def ensure_full_citations_in_answer(answer: str, relevant_articles: list[str]) -> str:
     answer = answer.strip()
@@ -679,6 +589,128 @@ def override_references_for_known_cases(
         return docs, articles
 
     return relevant_docs, relevant_articles
+
+def infer_question_domain(question: str) -> str | None:
+    q = question.lower()
+
+    if any(x in q for x in [
+        "sở hữu trí tuệ",
+        "sở hữu công nghiệp",
+        "nhãn hiệu",
+        "sáng chế",
+        "kiểu dáng công nghiệp",
+        "chỉ dẫn địa lý",
+        "quyền tác giả",
+        "văn bằng bảo hộ",
+        "tên thương mại",
+        "giống cây trồng",
+    ]):
+        return "ip"
+
+    if any(x in q for x in [
+        "thuế",
+        "hóa đơn",
+        "chứng từ",
+        "mã số thuế",
+        "biên lai",
+        "cơ quan thuế",
+    ]):
+        return "tax"
+
+    if any(x in q for x in [
+        "lao động",
+        "bảo hiểm xã hội",
+        "bhxh",
+        "hợp đồng lao động",
+        "công đoàn",
+        "an toàn vệ sinh lao động",
+        "khám sức khỏe",
+        "tai nạn lao động",
+    ]):
+        return "labor"
+
+    if any(x in q for x in [
+        "doanh nghiệp nhỏ và vừa",
+        "nhỏ và vừa",
+        "dnnvv",
+        "hỗ trợ doanh nghiệp",
+        "quỹ bảo lãnh tín dụng",
+        "quỹ phát triển doanh nghiệp",
+        "khởi nghiệp sáng tạo",
+        "chuỗi giá trị",
+        "cụm liên kết ngành",
+    ]):
+        return "sme_support"
+
+    return None
+
+
+def ref_belongs_to_domain(ref: str, domain: str | None) -> bool:
+    if domain is None:
+        return True
+
+    if domain == "ip":
+        return any(code in ref for code in [
+            "50/2005/QH11",
+            "07/2022/QH15",
+        ])
+
+    if domain == "tax":
+        return any(code in ref for code in [
+            "38/2019/QH14",
+            "126/2020/NĐ-CP",
+            "123/2020/NĐ-CP",
+            "70/2025/NĐ-CP",
+            "105/2020/TT-BTC",
+            "80/2021/TT-BTC",
+            "40/2021/TT-BTC",
+            "320/2025/NĐ-CP",
+        ])
+
+    if domain == "labor":
+        return any(code in ref for code in [
+            "12/2022/NĐ-CP",
+            "45/2019/QH14",
+            "50/2024/QH15",
+        ])
+
+    if domain == "sme_support":
+        return any(code in ref for code in [
+            "04/2017/QH14",
+            "80/2021/NĐ-CP",
+            "06/2022/TT-BKHDT",
+            "52/2023/TT-BTC",
+            "34/2018/NĐ-CP",
+            "39/2019/NĐ-CP",
+            "132/2018/TT-BTC",
+        ])
+
+    return True
+
+
+def filter_relevant_by_domain(question: str, relevant_docs: list[str], relevant_articles: list[str]):
+    domain = infer_question_domain(question)
+
+    if domain is None:
+        return relevant_docs, relevant_articles
+
+    filtered_articles = [
+        ref for ref in relevant_articles
+        if ref_belongs_to_domain(ref, domain)
+    ]
+
+    # Nếu filter làm rỗng thì giữ nguyên để tránh mất hết căn cứ
+    if not filtered_articles:
+        return relevant_docs, relevant_articles
+
+    allowed_doc_keys = set(ref.split("|")[0] for ref in filtered_articles)
+
+    filtered_docs = [
+        doc for doc in relevant_docs
+        if doc.split("|")[0] in allowed_doc_keys
+    ]
+
+    return filtered_docs, filtered_articles
 
 def main():
     parser = argparse.ArgumentParser()
@@ -956,6 +988,12 @@ def main():
             lookup=lookup,
             max_docs=args.max_docs,
             max_articles=args.max_articles,
+        )
+        
+        relevant_docs, relevant_articles = filter_relevant_by_domain(
+            question=question,
+            relevant_docs=relevant_docs,
+            relevant_articles=relevant_articles,
         )
         
         relevant_docs, relevant_articles = override_references_for_known_cases(

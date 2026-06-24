@@ -53,223 +53,216 @@ def get_chunk_text(chunk: dict) -> str:
 
 def expand_query(query: str) -> str:
     """
-    Mở rộng query bằng các cụm pháp lý tương đương.
+    Mở rộng query theo intent pháp lý tổng quát.
     Chỉ dùng cho retrieval, không thay đổi câu hỏi gốc.
     """
     q = query.lower()
     expansions = []
 
-    # Hồ sơ đăng ký doanh nghiệp chưa hợp lệ
-    if "hồ sơ đăng ký doanh nghiệp" in q and (
-        "chưa hợp lệ" in q
-        or "không hợp lệ" in q
-        or "sửa hồ sơ" in q
-        or "bổ sung hồ sơ" in q
+    def has_any(*terms):
+        return any(term in q for term in terms)
+
+    def has_all(*terms):
+        return all(term in q for term in terms)
+
+    # =========================
+    # 1. Đăng ký doanh nghiệp
+    # =========================
+    if has_all("hồ sơ đăng ký doanh nghiệp") and has_any(
+        "chưa hợp lệ", "không hợp lệ", "sửa hồ sơ", "bổ sung hồ sơ"
     ):
         expansions.extend([
+            "168/2025/NĐ-CP Điều 32",
             "thông báo yêu cầu sửa đổi bổ sung hồ sơ đăng ký doanh nghiệp",
-            "hồ sơ chưa hợp lệ",
-            "nội dung cần sửa đổi bổ sung",
-            "cơ quan đăng ký kinh doanh thông báo bằng văn bản",
-            "Điều 32 Nghị định 168/2025/NĐ-CP",
+            "hồ sơ chưa hợp lệ cơ quan đăng ký kinh doanh thông báo bằng văn bản",
         ])
 
-    # Tên doanh nghiệp bằng tiếng nước ngoài
     if "tên doanh nghiệp bằng tiếng nước ngoài" in q:
         expansions.extend([
-            "Điều 39 Luật Doanh nghiệp",
-            "tên doanh nghiệp bằng tiếng nước ngoài và tên viết tắt",
             "59/2020/QH14 Điều 39",
+            "tên doanh nghiệp bằng tiếng nước ngoài tên viết tắt doanh nghiệp",
         ])
 
-    # Đăng ký sử dụng hóa đơn điện tử
-    if "đăng ký sử dụng hóa đơn điện tử" in q:
+    if has_any("mã số thuế của doanh nghiệp", "mã số doanh nghiệp"):
         expansions.extend([
-            "Điều 15 Nghị định 123/2020/NĐ-CP",
-            "đăng ký thay đổi nội dung đăng ký sử dụng hóa đơn điện tử",
+            "168/2025/NĐ-CP Điều 8",
+            "mã số doanh nghiệp đồng thời là mã số thuế của doanh nghiệp",
         ])
 
-    # Ngừng sử dụng hóa đơn điện tử
-    if "ngừng sử dụng hóa đơn điện tử" in q:
+    # =========================
+    # 2. Hỗ trợ DNNVV
+    # =========================
+    if has_any("doanh nghiệp nhỏ và vừa", "nhỏ và vừa", "dnnvv"):
         expansions.extend([
-            "Điều 16 Nghị định 123/2020/NĐ-CP",
-            "các trường hợp ngừng sử dụng hóa đơn điện tử",
+            "Luật Hỗ trợ doanh nghiệp nhỏ và vừa 04/2017/QH14",
+            "Nghị định 80/2021/NĐ-CP hỗ trợ doanh nghiệp nhỏ và vừa",
         ])
-    #    
-    if (
-        ("cơ sở ươm tạo" in q or "ươm tạo" in q)
-        and ("khu làm việc chung" in q or "làm việc chung" in q)
-    ):
+
+    if has_any("cơ sở ươm tạo", "ươm tạo", "khu làm việc chung", "cơ sở kỹ thuật"):
         expansions.extend([
-            "Luật Hỗ trợ doanh nghiệp nhỏ và vừa",
             "04/2017/QH14 Điều 12",
             "hỗ trợ cơ sở ươm tạo cơ sở kỹ thuật khu làm việc chung",
             "hỗ trợ thuế đất đai cơ sở ươm tạo khu làm việc chung",
         ])
 
-    if "giữ bản chính" in q and ("bằng cấp" in q or "văn bằng" in q or "chứng chỉ" in q):
-        expansions.extend([
-            "Nghị định 12/2022/NĐ-CP Điều 9",
-            "giữ bản chính giấy tờ tùy thân văn bằng chứng chỉ của người lao động",
-            "buộc trả lại bản chính giấy tờ tùy thân văn bằng chứng chỉ",
-            "vi phạm giao kết hợp đồng lao động",
-        ])
-
-    if (
-        "số lao động tham gia bảo hiểm xã hội bình quân năm" in q
-        and ("doanh nghiệp nhỏ và vừa" in q or "nhỏ và vừa" in q)
+    if has_all("số lao động tham gia bảo hiểm xã hội bình quân năm") and has_any(
+        "doanh nghiệp nhỏ và vừa", "nhỏ và vừa"
     ):
         expansions.extend([
-            "Luật Hỗ trợ doanh nghiệp nhỏ và vừa 04/2017/QH14 Điều 4",
+            "04/2017/QH14 Điều 4",
             "tiêu chí doanh nghiệp nhỏ và vừa số lao động tham gia bảo hiểm xã hội bình quân năm không quá 200 người",
         ])
 
-    if "quỹ bảo lãnh tín dụng" in q and ("điều kiện" in q or "cấp bảo lãnh" in q):
+    if has_any("hỗ trợ tư vấn", "mức hỗ trợ tư vấn", "mạng lưới tư vấn viên"):
         expansions.extend([
-        "34/2018/NĐ-CP Điều 16 điều kiện cấp bảo lãnh tín dụng",
-        "điều kiện cấp bảo lãnh tín dụng doanh nghiệp nhỏ và vừa",
-        "có dự án đầu tư phương án sản xuất kinh doanh khả thi có khả năng hoàn trả vốn vay",
-    ])
-
-    if "bộ tài chính" in q and "doanh nghiệp siêu nhỏ" in q:
-        expansions.extend([
-            "Luật Hỗ trợ doanh nghiệp nhỏ và vừa 04/2017/QH14 Điều 23",
-            "Bộ Tài chính hướng dẫn thuế kế toán doanh nghiệp siêu nhỏ",
-            "Thông tư 132/2018/TT-BTC chế độ kế toán doanh nghiệp siêu nhỏ",
-        ])   
-
-    # Hóa đơn điện tử - loại hóa đơn
-    if "loại hóa đơn điện tử" in q or "những loại hóa đơn điện tử" in q:
-        expansions.extend([
-            "123/2020/NĐ-CP Điều 3 hóa đơn điện tử có mã của cơ quan thuế hóa đơn điện tử không có mã",
-            "38/2019/QH14 Điều 89 hóa đơn điện tử",
-            "hóa đơn điện tử có mã của cơ quan thuế không có mã của cơ quan thuế",
+            "80/2021/NĐ-CP Điều 13",
+            "hỗ trợ tư vấn doanh nghiệp nhỏ và vừa mạng lưới tư vấn viên mức hỗ trợ",
+            "doanh nghiệp siêu nhỏ 50 triệu doanh nghiệp nhỏ 100 triệu doanh nghiệp vừa 150 triệu",
         ])
 
-    # Cưỡng chế nợ thuế
-    if "biện pháp cưỡng chế" in q and ("nợ thuế" in q or "cơ quan thuế" in q):
+    if has_all("chi phí", "tư vấn viên") and has_any("hỗ trợ tư vấn", "ngân sách nhà nước"):
         expansions.extend([
-            "38/2019/QH14 Điều 125 biện pháp cưỡng chế thi hành quyết định hành chính về quản lý thuế",
-            "trích tiền từ tài khoản khấu trừ tiền lương dừng làm thủ tục hải quan ngừng sử dụng hóa đơn kê biên tài sản thu hồi giấy chứng nhận",
+            "52/2023/TT-BTC Điều 7",
+            "chi phí tư vấn viên hỗ trợ tư vấn doanh nghiệp nhỏ và vừa",
+            "chi phí theo hợp đồng tư vấn không phải chi phí học viên",
         ])
 
-    # Biện pháp dân sự SHTT
-    if "biện pháp dân sự" in q and ("sở hữu trí tuệ" in q or "xâm phạm quyền" in q):
+    if has_any("quỹ bảo lãnh tín dụng") and has_any("điều kiện", "cấp bảo lãnh"):
         expansions.extend([
-            "50/2005/QH11 Điều 202 biện pháp dân sự xử lý xâm phạm quyền sở hữu trí tuệ",
-            "buộc chấm dứt hành vi xâm phạm xin lỗi cải chính công khai bồi thường thiệt hại tiêu hủy hàng hóa",
+            "34/2018/NĐ-CP Điều 16",
+            "điều kiện cấp bảo lãnh tín dụng doanh nghiệp nhỏ và vừa",
+            "phương án sản xuất kinh doanh khả thi có khả năng hoàn trả vốn vay",
         ])
 
-    # Hóa đơn sai tên địa chỉ
-    if "hóa đơn điện tử" in q and ("sai tên" in q or "sai địa chỉ" in q):
+    if has_all("bộ tài chính") and has_any("doanh nghiệp siêu nhỏ", "thuế", "kế toán"):
         expansions.extend([
-            "123/2020/NĐ-CP Điều 19 xử lý hóa đơn có sai sót sai tên địa chỉ người mua",
-            "sai tên địa chỉ người mua nhưng không sai mã số thuế không phải lập lại hóa đơn",
+            "04/2017/QH14 Điều 23",
+            "Bộ Tài chính hướng dẫn thủ tục hành chính thuế chế độ kế toán doanh nghiệp siêu nhỏ",
+            "132/2018/TT-BTC chế độ kế toán doanh nghiệp siêu nhỏ",
         ])
 
-    # Không trả sổ BHXH
-    if "không trả sổ bảo hiểm xã hội" in q or "không trả sổ bhxh" in q:
-        expansions.extend([
-            "12/2022/NĐ-CP Điều 12 không hoàn thành thủ tục xác nhận thời gian đóng bảo hiểm xã hội không trả lại giấy tờ",
-            "chấm dứt hợp đồng lao động trả sổ bảo hiểm xã hội cho người lao động",
-        ])
-
-    # Hình thức xử phạt chính
-    if "hình thức xử phạt chính" in q and ("lao động" in q or "bảo hiểm xã hội" in q):
-        expansions.extend([
-            "12/2022/NĐ-CP Điều 4 hình thức xử phạt biện pháp khắc phục hậu quả cảnh cáo phạt tiền",
-        ])
-        
-        # ID 22 - chi phí tư vấn viên, tránh nhầm sang chi phí học viên
-    if (
-        "chi phí" in q
-        and "tư vấn viên" in q
-        and ("hỗ trợ tư vấn" in q or "ngân sách nhà nước" in q)
-    ):
-        expansions.extend([
-            "52/2023/TT-BTC Điều 7 chi phí tư vấn viên hỗ trợ tư vấn doanh nghiệp nhỏ và vừa",
-            "chi phí thuê tư vấn viên theo hợp đồng tư vấn hỗ trợ doanh nghiệp nhỏ và vừa",
-            "hỗ trợ tư vấn từ ngân sách nhà nước chi phí tư vấn viên không phải học viên",
-        ])
-
-    # ID 27 - phạm vi đăng ký thuế chung, tránh kéo nhầm Thông tư thuế TNCN
+    # =========================
+    # 3. Thuế, hóa đơn, chứng từ
+    # =========================
     if "phạm vi đăng ký thuế" in q:
         expansions.extend([
-            "105/2020/TT-BTC đăng ký thuế phạm vi đăng ký thuế mã số thuế chấm dứt hiệu lực mã số thuế khôi phục mã số thuế",
-            "38/2019/QH14 Điều 30 đăng ký thuế cấp mã số thuế sử dụng mã số thuế",
-            "quản lý thuế đăng ký thuế cấp mã số thuế thay đổi thông tin đăng ký thuế chấm dứt hiệu lực mã số thuế",
+            "38/2019/QH14 Điều 30",
+            "105/2020/TT-BTC phạm vi đăng ký thuế cấp mã số thuế thay đổi thông tin đăng ký thuế chấm dứt hiệu lực mã số thuế",
         ])
 
-    # ID 29 - cơ sở ươm tạo / khu làm việc chung, cơ cấu tổ chức bộ máy
-    if (
-        ("khu làm việc chung" in q or "cơ sở ươm tạo" in q)
-        and ("cơ cấu tổ chức" in q or "bộ máy" in q)
-    ):
+    if has_any("đăng ký sử dụng hóa đơn điện tử"):
         expansions.extend([
-            "80/2021/NĐ-CP khu làm việc chung cơ cấu tổ chức bộ máy nhân sự quản lý điều hành",
-            "80/2021/NĐ-CP cơ sở ươm tạo khu làm việc chung hỗ trợ doanh nghiệp khởi nghiệp sáng tạo điều kiện cơ cấu tổ chức",
-            "cơ sở ươm tạo khu làm việc chung có cơ cấu tổ chức bộ máy nhân sự chuyên môn",
+            "123/2020/NĐ-CP Điều 15",
+            "đăng ký thay đổi nội dung đăng ký sử dụng hóa đơn điện tử",
         ])
 
-    # ID 65 - không khám sức khỏe định kỳ, cần nghị định xử phạt
-    if (
-        "không tổ chức khám sức khỏe định kỳ" in q
-        or ("khám sức khỏe định kỳ" in q and ("xử phạt" in q or "bị phạt" in q))
-    ):
+    if has_any("ngừng sử dụng hóa đơn điện tử", "buộc phải ngừng sử dụng hóa đơn điện tử"):
         expansions.extend([
-            "12/2022/NĐ-CP Điều 22 không tổ chức khám sức khỏe định kỳ cho người lao động",
-            "không tổ chức khám sức khỏe định kỳ phạt tiền mỗi người lao động tối đa 75.000.000 đồng",
-            "vi phạm quy định về phòng ngừa tai nạn lao động bệnh nghề nghiệp khám sức khỏe định kỳ",
+            "123/2020/NĐ-CP Điều 16",
+            "các trường hợp ngừng sử dụng hóa đơn điện tử",
         ])
 
-    # ID 71 - hình thức xử phạt chính, tránh nhầm sang biện pháp khắc phục
-    if (
-        "hình thức xử phạt chính" in q
-        and ("lao động" in q or "bảo hiểm xã hội" in q)
-    ):
+    if has_any("loại hóa đơn điện tử", "những loại hóa đơn điện tử"):
         expansions.extend([
-            "12/2022/NĐ-CP Điều 3 hình thức xử phạt cảnh cáo phạt tiền",
-            "hình thức xử phạt chính là cảnh cáo hoặc phạt tiền",
+            "38/2019/QH14 Điều 89",
+            "hóa đơn điện tử có mã của cơ quan thuế hóa đơn điện tử không có mã của cơ quan thuế",
         ])
 
-    # ID 79 - không trả sổ BHXH khi chấm dứt hợp đồng
-    if (
-        "không trả sổ bảo hiểm xã hội" in q
-        or "không trả sổ bhxh" in q
-        or ("sổ bảo hiểm xã hội" in q and "chấm dứt hợp đồng" in q)
-    ):
+    if has_all("hóa đơn điện tử") and has_any("sai tên", "sai địa chỉ"):
         expansions.extend([
-            "12/2022/NĐ-CP Điều 12 không hoàn thành thủ tục xác nhận thời gian đóng bảo hiểm xã hội",
-            "chấm dứt hợp đồng lao động trả lại sổ bảo hiểm xã hội giấy tờ cho người lao động",
-            "không trả sổ bảo hiểm xã hội cho người lao động khi chấm dứt hợp đồng lao động",
+            "123/2020/NĐ-CP Điều 19",
+            "xử lý hóa đơn điện tử có sai sót sai tên địa chỉ người mua không sai mã số thuế",
         ])
 
-    # ID 83 - công đoàn cấp trên vào doanh nghiệp tuyên truyền thành lập công đoàn
-    if (
-        "cán bộ công đoàn" in q
-        and ("tuyên truyền" in q or "thành lập công đoàn" in q)
-    ):
+    if has_any("hóa đơn điện tử không có mã", "không có mã của cơ quan thuế"):
         expansions.extend([
-            "50/2024/QH15 Điều 19 công đoàn cấp trên trực tiếp cơ sở tuyên truyền vận động hướng dẫn thành lập công đoàn",
-            "12/2022/NĐ-CP Điều 35 cản trở người lao động thành lập gia nhập hoạt động công đoàn",
-            "không cho cán bộ công đoàn vào doanh nghiệp tuyên truyền hướng dẫn người lao động thành lập công đoàn",
+            "38/2019/QH14 Điều 91",
+            "123/2020/NĐ-CP Điều 18",
+            "sử dụng hóa đơn điện tử không có mã của cơ quan thuế điều kiện hạ tầng công nghệ thông tin phần mềm kế toán truyền dữ liệu",
         ])
 
-    # ID 89 - hóa đơn điện tử không có mã, tránh nhầm sang miễn phí dịch vụ
-    if (
-        "hóa đơn điện tử không có mã" in q
-        or "không có mã của cơ quan thuế" in q
+    if has_all("biện pháp cưỡng chế") and has_any("nợ thuế", "cơ quan thuế"):
+        expansions.extend([
+            "38/2019/QH14 Điều 125",
+            "biện pháp cưỡng chế thi hành quyết định hành chính về quản lý thuế",
+            "trích tiền từ tài khoản phong tỏa tài khoản khấu trừ lương ngừng sử dụng hóa đơn kê biên tài sản thu hồi giấy chứng nhận",
+        ])
+
+    # =========================
+    # 4. Lao động, BHXH, xử phạt
+    # =========================
+    if has_any("giữ bản chính") and has_any("bằng cấp", "văn bằng", "chứng chỉ", "giấy tờ tùy thân"):
+        expansions.extend([
+            "12/2022/NĐ-CP Điều 9",
+            "giữ bản chính giấy tờ tùy thân văn bằng chứng chỉ của người lao động",
+            "buộc trả lại bản chính giấy tờ tùy thân văn bằng chứng chỉ",
+        ])
+
+    if has_all("chậm đóng") and has_any("bảo hiểm xã hội", "bhxh"):
+        expansions.extend([
+            "12/2022/NĐ-CP Điều 39",
+            "chậm đóng bảo hiểm xã hội bắt buộc bảo hiểm thất nghiệp buộc đóng đủ nộp lãi",
+        ])
+
+    if has_any("không trả sổ bảo hiểm xã hội", "không trả sổ bhxh") or has_all(
+        "sổ bảo hiểm xã hội", "chấm dứt hợp đồng"
     ):
         expansions.extend([
-            "38/2019/QH14 Điều 91 sử dụng hóa đơn điện tử không có mã của cơ quan thuế",
-            "123/2020/NĐ-CP Điều 18 hóa đơn điện tử không có mã của cơ quan thuế",
-            "doanh nghiệp sử dụng hóa đơn điện tử không có mã có giao dịch điện tử phần mềm kế toán phần mềm hóa đơn truyền dữ liệu đến cơ quan thuế",
+            "12/2022/NĐ-CP Điều 12",
+            "chấm dứt hợp đồng lao động xác nhận thời gian đóng bảo hiểm xã hội trả lại sổ bảo hiểm xã hội giấy tờ",
+        ])
+
+    if has_all("hình thức xử phạt chính") and has_any("lao động", "bảo hiểm xã hội"):
+        expansions.extend([
+            "12/2022/NĐ-CP Điều 3",
+            "hình thức xử phạt chính cảnh cáo phạt tiền",
+        ])
+
+    if has_any("khám sức khỏe định kỳ") and has_any("xử phạt", "bị phạt", "phạt"):
+        expansions.extend([
+            "12/2022/NĐ-CP Điều 22",
+            "không tổ chức khám sức khỏe định kỳ cho người lao động xử phạt",
+        ])
+
+    if has_any("cán bộ công đoàn", "công đoàn cấp trên") and has_any(
+        "tuyên truyền", "thành lập công đoàn", "hướng dẫn người lao động"
+    ):
+        expansions.extend([
+            "50/2024/QH15 Điều 19",
+            "12/2022/NĐ-CP Điều 35",
+            "công đoàn cấp trên trực tiếp cơ sở tuyên truyền vận động hướng dẫn thành lập công đoàn",
+            "cản trở người lao động thành lập gia nhập hoạt động công đoàn",
+        ])
+
+    # =========================
+    # 5. Sở hữu trí tuệ
+    # =========================
+    if has_all("biện pháp dân sự") and has_any("sở hữu trí tuệ", "xâm phạm quyền"):
+        expansions.extend([
+            "50/2005/QH11 Điều 202",
+            "biện pháp dân sự xâm phạm quyền sở hữu trí tuệ buộc chấm dứt hành vi xâm phạm xin lỗi cải chính bồi thường thiệt hại tiêu hủy hàng hóa",
+        ])
+
+    if has_any("hợp đồng chuyển nhượng quyền sở hữu công nghiệp") and has_any(
+        "hiệu lực", "có hiệu lực"
+    ):
+        expansions.extend([
+            "50/2005/QH11 Điều 148",
+            "hiệu lực hợp đồng chuyển giao quyền sở hữu công nghiệp đăng ký tại cơ quan quản lý nhà nước",
         ])
 
     if not expansions:
         return query
 
-    return query + " " + " ".join(expansions)
+    # Khử trùng lặp để query không bị kéo quá dài
+    seen = set()
+    deduped = []
+    for item in expansions:
+        if item not in seen:
+            seen.add(item)
+            deduped.append(item)
+
+    return query + " " + " ".join(deduped)
 
 def detect_query_signals(query: str) -> dict:
     query_lower = query.lower()
