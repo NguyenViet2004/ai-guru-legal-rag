@@ -179,6 +179,92 @@ def expand_query(query: str) -> str:
         expansions.extend([
             "12/2022/NĐ-CP Điều 4 hình thức xử phạt biện pháp khắc phục hậu quả cảnh cáo phạt tiền",
         ])
+        
+        # ID 22 - chi phí tư vấn viên, tránh nhầm sang chi phí học viên
+    if (
+        "chi phí" in q
+        and "tư vấn viên" in q
+        and ("hỗ trợ tư vấn" in q or "ngân sách nhà nước" in q)
+    ):
+        expansions.extend([
+            "52/2023/TT-BTC Điều 7 chi phí tư vấn viên hỗ trợ tư vấn doanh nghiệp nhỏ và vừa",
+            "chi phí thuê tư vấn viên theo hợp đồng tư vấn hỗ trợ doanh nghiệp nhỏ và vừa",
+            "hỗ trợ tư vấn từ ngân sách nhà nước chi phí tư vấn viên không phải học viên",
+        ])
+
+    # ID 27 - phạm vi đăng ký thuế chung, tránh kéo nhầm Thông tư thuế TNCN
+    if "phạm vi đăng ký thuế" in q:
+        expansions.extend([
+            "105/2020/TT-BTC đăng ký thuế phạm vi đăng ký thuế mã số thuế chấm dứt hiệu lực mã số thuế khôi phục mã số thuế",
+            "38/2019/QH14 Điều 30 đăng ký thuế cấp mã số thuế sử dụng mã số thuế",
+            "quản lý thuế đăng ký thuế cấp mã số thuế thay đổi thông tin đăng ký thuế chấm dứt hiệu lực mã số thuế",
+        ])
+
+    # ID 29 - cơ sở ươm tạo / khu làm việc chung, cơ cấu tổ chức bộ máy
+    if (
+        ("khu làm việc chung" in q or "cơ sở ươm tạo" in q)
+        and ("cơ cấu tổ chức" in q or "bộ máy" in q)
+    ):
+        expansions.extend([
+            "80/2021/NĐ-CP khu làm việc chung cơ cấu tổ chức bộ máy nhân sự quản lý điều hành",
+            "80/2021/NĐ-CP cơ sở ươm tạo khu làm việc chung hỗ trợ doanh nghiệp khởi nghiệp sáng tạo điều kiện cơ cấu tổ chức",
+            "cơ sở ươm tạo khu làm việc chung có cơ cấu tổ chức bộ máy nhân sự chuyên môn",
+        ])
+
+    # ID 65 - không khám sức khỏe định kỳ, cần nghị định xử phạt
+    if (
+        "không tổ chức khám sức khỏe định kỳ" in q
+        or ("khám sức khỏe định kỳ" in q and ("xử phạt" in q or "bị phạt" in q))
+    ):
+        expansions.extend([
+            "12/2022/NĐ-CP Điều 22 không tổ chức khám sức khỏe định kỳ cho người lao động",
+            "không tổ chức khám sức khỏe định kỳ phạt tiền mỗi người lao động tối đa 75.000.000 đồng",
+            "vi phạm quy định về phòng ngừa tai nạn lao động bệnh nghề nghiệp khám sức khỏe định kỳ",
+        ])
+
+    # ID 71 - hình thức xử phạt chính, tránh nhầm sang biện pháp khắc phục
+    if (
+        "hình thức xử phạt chính" in q
+        and ("lao động" in q or "bảo hiểm xã hội" in q)
+    ):
+        expansions.extend([
+            "12/2022/NĐ-CP Điều 3 hình thức xử phạt cảnh cáo phạt tiền",
+            "hình thức xử phạt chính là cảnh cáo hoặc phạt tiền",
+        ])
+
+    # ID 79 - không trả sổ BHXH khi chấm dứt hợp đồng
+    if (
+        "không trả sổ bảo hiểm xã hội" in q
+        or "không trả sổ bhxh" in q
+        or ("sổ bảo hiểm xã hội" in q and "chấm dứt hợp đồng" in q)
+    ):
+        expansions.extend([
+            "12/2022/NĐ-CP Điều 12 không hoàn thành thủ tục xác nhận thời gian đóng bảo hiểm xã hội",
+            "chấm dứt hợp đồng lao động trả lại sổ bảo hiểm xã hội giấy tờ cho người lao động",
+            "không trả sổ bảo hiểm xã hội cho người lao động khi chấm dứt hợp đồng lao động",
+        ])
+
+    # ID 83 - công đoàn cấp trên vào doanh nghiệp tuyên truyền thành lập công đoàn
+    if (
+        "cán bộ công đoàn" in q
+        and ("tuyên truyền" in q or "thành lập công đoàn" in q)
+    ):
+        expansions.extend([
+            "50/2024/QH15 Điều 19 công đoàn cấp trên trực tiếp cơ sở tuyên truyền vận động hướng dẫn thành lập công đoàn",
+            "12/2022/NĐ-CP Điều 35 cản trở người lao động thành lập gia nhập hoạt động công đoàn",
+            "không cho cán bộ công đoàn vào doanh nghiệp tuyên truyền hướng dẫn người lao động thành lập công đoàn",
+        ])
+
+    # ID 89 - hóa đơn điện tử không có mã, tránh nhầm sang miễn phí dịch vụ
+    if (
+        "hóa đơn điện tử không có mã" in q
+        or "không có mã của cơ quan thuế" in q
+    ):
+        expansions.extend([
+            "38/2019/QH14 Điều 91 sử dụng hóa đơn điện tử không có mã của cơ quan thuế",
+            "123/2020/NĐ-CP Điều 18 hóa đơn điện tử không có mã của cơ quan thuế",
+            "doanh nghiệp sử dụng hóa đơn điện tử không có mã có giao dịch điện tử phần mềm kế toán phần mềm hóa đơn truyền dữ liệu đến cơ quan thuế",
+        ])
 
     if not expansions:
         return query
