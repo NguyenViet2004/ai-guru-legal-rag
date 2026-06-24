@@ -126,9 +126,10 @@ def expand_query(query: str) -> str:
 
     if "quỹ bảo lãnh tín dụng" in q and ("điều kiện" in q or "cấp bảo lãnh" in q):
         expansions.extend([
-            "Nghị định 34/2018/NĐ-CP Điều 15",
-            "điều kiện cấp bảo lãnh tín dụng cho doanh nghiệp nhỏ và vừa",
-        ])
+        "34/2018/NĐ-CP Điều 16 điều kiện cấp bảo lãnh tín dụng",
+        "điều kiện cấp bảo lãnh tín dụng doanh nghiệp nhỏ và vừa",
+        "có dự án đầu tư phương án sản xuất kinh doanh khả thi có khả năng hoàn trả vốn vay",
+    ])
 
     if "bộ tài chính" in q and "doanh nghiệp siêu nhỏ" in q:
         expansions.extend([
@@ -136,6 +137,7 @@ def expand_query(query: str) -> str:
             "Bộ Tài chính hướng dẫn thuế kế toán doanh nghiệp siêu nhỏ",
             "Thông tư 132/2018/TT-BTC chế độ kế toán doanh nghiệp siêu nhỏ",
         ])   
+
 
     if not expansions:
         return query
