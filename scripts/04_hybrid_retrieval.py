@@ -95,8 +95,8 @@ def expand_query(query: str) -> str:
             "Điều 16 Nghị định 123/2020/NĐ-CP",
             "các trường hợp ngừng sử dụng hóa đơn điện tử",
         ])
-        
-        if (
+    #    
+    if (
         ("cơ sở ươm tạo" in q or "ươm tạo" in q)
         and ("khu làm việc chung" in q or "làm việc chung" in q)
     ):
@@ -135,7 +135,7 @@ def expand_query(query: str) -> str:
             "Luật Hỗ trợ doanh nghiệp nhỏ và vừa 04/2017/QH14 Điều 23",
             "Bộ Tài chính hướng dẫn thuế kế toán doanh nghiệp siêu nhỏ",
             "Thông tư 132/2018/TT-BTC chế độ kế toán doanh nghiệp siêu nhỏ",
-        ])
+        ])   
 
     if not expansions:
         return query
