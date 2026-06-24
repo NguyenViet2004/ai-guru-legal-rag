@@ -251,6 +251,247 @@ def expand_query(query: str) -> str:
             "hiệu lực hợp đồng chuyển giao quyền sở hữu công nghiệp đăng ký tại cơ quan quản lý nhà nước",
         ])
 
+        # =========================
+    # Hộ kinh doanh / đăng ký hộ kinh doanh
+    # =========================
+    if "hộ kinh doanh" in q and has_any(
+        "đăng ký", "thành lập", "hồ sơ", "phương thức", "ngành nghề", "lệ phí", "sửa đổi", "bổ sung"
+    ):
+        expansions.extend([
+            "168/2025/NĐ-CP Chương VIII đăng ký hộ kinh doanh",
+            "đăng ký hộ kinh doanh phương thức đăng ký hồ sơ đăng ký hộ kinh doanh",
+            "hồ sơ đăng ký thành lập hộ kinh doanh giấy đề nghị đăng ký hộ kinh doanh",
+            "ngành nghề kinh doanh của hộ kinh doanh ngành kinh tế cấp bốn",
+            "thanh toán lệ phí đăng ký hộ kinh doanh",
+            "sửa đổi bổ sung hồ sơ đăng ký hộ kinh doanh",
+        ])
+
+    # =========================
+    # Quỹ bảo lãnh tín dụng DNNVV
+    # =========================
+    if has_any("quỹ bảo lãnh tín dụng", "bảo lãnh tín dụng") and has_any(
+        "doanh nghiệp nhỏ và vừa", "dnnvv", "sme", "cấp bảo lãnh", "bảo lãnh", "vay"
+    ):
+        expansions.extend([
+            "34/2018/NĐ-CP quỹ bảo lãnh tín dụng cho doanh nghiệp nhỏ và vừa",
+            "34/2018/NĐ-CP Điều 15 đối tượng được cấp bảo lãnh tín dụng",
+            "34/2018/NĐ-CP Điều 16 điều kiện để được cấp bảo lãnh tín dụng",
+            "34/2018/NĐ-CP Điều 17 phạm vi bảo lãnh tín dụng",
+            "34/2018/NĐ-CP Điều 18 thời hạn cấp bảo lãnh tín dụng",
+            "34/2018/NĐ-CP Điều 19 đồng tiền bảo lãnh tín dụng",
+            "34/2018/NĐ-CP Điều 20 chi phí hoạt động bảo lãnh tín dụng",
+            "34/2018/NĐ-CP Điều 21 hồ sơ đề nghị cấp bảo lãnh tín dụng",
+            "34/2018/NĐ-CP Điều 22 thẩm định hồ sơ quyết định cấp bảo lãnh tín dụng",
+            "34/2018/NĐ-CP Điều 23 hợp đồng bảo lãnh tín dụng",
+            "34/2018/NĐ-CP Điều 24 chứng thư bảo lãnh tín dụng",
+            "34/2018/NĐ-CP Điều 29 quy trình thực hiện cam kết bảo lãnh tín dụng",
+            "34/2018/NĐ-CP Điều 34 nhận nợ hoàn trả khoản nợ được bảo lãnh",
+            "34/2018/NĐ-CP Điều 35 chấm dứt nghĩa vụ bảo lãnh vay vốn",
+            "34/2018/NĐ-CP Điều 37 xử lý rủi ro bảo lãnh tín dụng",
+        ])
+
+    # =========================
+    # Quỹ phát triển DNNVV
+    # =========================
+    if has_any("quỹ phát triển doanh nghiệp nhỏ và vừa", "quỹ phát triển dnnvv"):
+        expansions.extend([
+            "39/2019/NĐ-CP tổ chức và hoạt động của Quỹ Phát triển doanh nghiệp nhỏ và vừa",
+            "39/2019/NĐ-CP cho vay tài trợ vốn hỗ trợ tăng cường năng lực doanh nghiệp nhỏ và vừa",
+            "Quỹ phát triển doanh nghiệp nhỏ và vừa cho vay thông qua ngân hàng hỗ trợ doanh nghiệp nhỏ và vừa",
+        ])
+
+    # =========================
+    # Luật Thương mại - hợp đồng, chế tài, giao hàng, đại lý, nhượng quyền
+    # =========================
+    if has_any(
+        "hợp đồng thương mại", "phạt vi phạm", "bồi thường thiệt hại", "chế tài",
+        "giao hàng", "thanh toán", "bên bán", "bên mua", "đại lý", "môi giới thương mại",
+        "nhượng quyền thương mại", "hội chợ", "triển lãm thương mại", "khuyến mại",
+        "gia công hàng hóa", "sở giao dịch hàng hóa"
+    ):
+        expansions.extend([
+            "36/2005/QH11 Luật Thương mại",
+            "36/2005/QH11 Điều 292 các loại chế tài trong thương mại",
+            "36/2005/QH11 Điều 300 phạt vi phạm",
+            "36/2005/QH11 Điều 301 mức phạt vi phạm tối đa tám phần trăm giá trị phần nghĩa vụ hợp đồng bị vi phạm",
+            "36/2005/QH11 Điều 302 bồi thường thiệt hại",
+            "36/2005/QH11 Điều 306 quyền yêu cầu tiền lãi do chậm thanh toán",
+            "36/2005/QH11 Điều 307 quan hệ giữa phạt vi phạm và bồi thường thiệt hại",
+            "36/2005/QH11 Điều 312 hủy bỏ hợp đồng",
+            "36/2005/QH11 Điều 314 hậu quả pháp lý của việc hủy bỏ hợp đồng",
+            "36/2005/QH11 Điều 34 giao hàng và chứng từ liên quan đến hàng hóa",
+            "36/2005/QH11 Điều 35 địa điểm giao hàng",
+            "36/2005/QH11 Điều 37 thời hạn giao hàng",
+            "36/2005/QH11 Điều 49 nghĩa vụ bảo hành hàng hóa",
+            "36/2005/QH11 Điều 50 thanh toán",
+            "36/2005/QH11 Điều 55 thời hạn thanh toán",
+            "36/2005/QH11 Điều 171 thù lao đại lý",
+            "36/2005/QH11 Điều 175 nghĩa vụ của bên đại lý",
+            "36/2005/QH11 Điều 177 thời hạn đại lý",
+            "36/2005/QH11 Điều 289 nghĩa vụ của thương nhân nhận quyền",
+        ])
+
+    # =========================
+    # Chi nhánh / văn phòng đại diện thương nhân nước ngoài
+    # =========================
+    if has_any("chi nhánh của thương nhân nước ngoài", "văn phòng đại diện của thương nhân nước ngoài"):
+        expansions.extend([
+            "36/2005/QH11 thương nhân nước ngoài chi nhánh văn phòng đại diện tại Việt Nam",
+            "36/2005/QH11 Điều 16 nghĩa vụ của chi nhánh thương nhân nước ngoài",
+            "36/2005/QH11 Điều 20 chế độ kế toán báo cáo hoạt động của chi nhánh thương nhân nước ngoài",
+        ])
+
+    # =========================
+    # Dân sự - ủy quyền, bảo đảm, thế chấp, vận chuyển
+    # =========================
+    if has_any("ủy quyền", "hợp đồng ủy quyền", "phạm vi ủy quyền", "chấm dứt ủy quyền"):
+        expansions.extend([
+            "91/2015/QH13 Bộ luật Dân sự hợp đồng ủy quyền",
+            "91/2015/QH13 Điều 562 hợp đồng ủy quyền",
+            "91/2015/QH13 Điều 563 thời hạn ủy quyền",
+            "91/2015/QH13 Điều 565 nghĩa vụ của bên được ủy quyền",
+            "91/2015/QH13 Điều 569 đơn phương chấm dứt hợp đồng ủy quyền",
+        ])
+
+    if has_any("thế chấp", "tài sản bảo đảm", "bảo đảm thực hiện nghĩa vụ", "tài sản hình thành trong tương lai"):
+        expansions.extend([
+            "91/2015/QH13 Bộ luật Dân sự bảo đảm thực hiện nghĩa vụ thế chấp tài sản",
+            "21/2021/NĐ-CP bảo đảm thực hiện nghĩa vụ tài sản hình thành trong tương lai",
+            "91/2015/QH13 Điều 303 phương thức xử lý tài sản cầm cố thế chấp",
+        ])
+
+    if has_any("vận chuyển hàng hóa", "bên vận chuyển", "tiền cước", "mất hàng", "hư hỏng hàng hóa"):
+        expansions.extend([
+            "91/2015/QH13 Bộ luật Dân sự hợp đồng vận chuyển tài sản",
+            "91/2015/QH13 Điều 533 nghĩa vụ của bên vận chuyển",
+            "91/2015/QH13 Điều 536 trả cước phí vận chuyển",
+            "91/2015/QH13 Điều 541 trách nhiệm bồi thường thiệt hại của bên vận chuyển",
+        ])
+
+    # =========================
+    # Nhãn hàng hóa
+    # =========================
+    if has_any("nhãn hàng hóa", "ghi nhãn hàng hóa", "hàng hóa khi lưu thông"):
+        expansions.extend([
+            "43/2017/NĐ-CP nhãn hàng hóa",
+            "111/2021/NĐ-CP sửa đổi bổ sung nhãn hàng hóa",
+            "hàng hóa lưu thông trong nước phải có nhãn hàng hóa",
+        ])
+
+    # =========================
+    # Kế toán / kiểm toán / xử phạt kế toán
+    # =========================
+    if has_any("kế toán", "kiểm toán", "chứng chỉ kế toán viên", "chứng chỉ kiểm toán viên", "tài liệu kế toán"):
+        expansions.extend([
+            "88/2015/QH13 Luật Kế toán",
+            "67/2011/QH12 Luật Kiểm toán độc lập",
+            "41/2018/NĐ-CP xử phạt vi phạm hành chính trong lĩnh vực kế toán kiểm toán độc lập",
+            "làm hư hỏng tài liệu kế toán chứng từ kế toán sổ kế toán xử phạt",
+        ])
+
+    # =========================
+    # Bảo vệ người tiêu dùng / dữ liệu khách hàng / KOL
+    # =========================
+    if has_any(
+        "người tiêu dùng", "khách hàng", "dữ liệu khách hàng", "thông tin khách hàng",
+        "bán hàng từ xa", "hợp đồng theo mẫu", "điều kiện giao dịch chung", "kol", "người có ảnh hưởng"
+    ):
+        expansions.extend([
+            "19/2023/QH15 Luật Bảo vệ quyền lợi người tiêu dùng",
+            "55/2024/NĐ-CP quy định chi tiết Luật Bảo vệ quyền lợi người tiêu dùng",
+            "19/2023/QH15 Điều 15 bảo vệ thông tin của người tiêu dùng",
+            "19/2023/QH15 Điều 16 xây dựng quy tắc bảo vệ thông tin của người tiêu dùng",
+            "19/2023/QH15 Điều 18 sử dụng thông tin của người tiêu dùng",
+            "19/2023/QH15 Điều 23 hợp đồng theo mẫu điều kiện giao dịch chung",
+            "55/2024/NĐ-CP Điều 22 giao dịch từ xa",
+            "75/2025/QH15 Điều 15a người chuyển tải sản phẩm quảng cáo người có ảnh hưởng",
+        ])
+
+    # =========================
+    # Môi trường / giấy phép môi trường / nhãn sinh thái
+    # =========================
+    if has_any("giấy phép môi trường", "nước thải", "quan trắc", "nhãn sinh thái", "bảo vệ môi trường", "cụm công nghiệp"):
+        expansions.extend([
+            "72/2020/QH14 Luật Bảo vệ môi trường",
+            "08/2022/NĐ-CP quy định chi tiết Luật Bảo vệ môi trường",
+            "72/2020/QH14 Điều 43 hồ sơ trình tự thủ tục cấp giấy phép môi trường",
+            "08/2022/NĐ-CP Điều 97 quan trắc nước thải",
+            "08/2022/NĐ-CP Điều 147 trình tự thủ tục chứng nhận Nhãn sinh thái Việt Nam",
+            "68/2017/NĐ-CP quản lý phát triển cụm công nghiệp trình tự thành lập cụm công nghiệp",
+        ])
+
+    # =========================
+    # Hải quan / xuất nhập khẩu / xuất xứ
+    # =========================
+    if has_any("hải quan", "xuất khẩu", "nhập khẩu", "xuất xứ", "giấy chứng nhận xuất xứ", "quà biếu", "quà tặng"):
+        expansions.extend([
+            "54/2014/QH13 Luật Hải quan",
+            "107/2016/QH13 Luật Thuế xuất khẩu thuế nhập khẩu",
+            "69/2018/NĐ-CP quản lý ngoại thương giấy phép nhập khẩu xuất khẩu",
+            "giấy chứng nhận xuất xứ hàng hóa quy tắc xuất xứ hàng hóa",
+        ])
+
+    # =========================
+    # An toàn thực phẩm / thực phẩm chức năng
+    # =========================
+    if has_any("an toàn thực phẩm", "thực phẩm chức năng", "trà sữa", "dụng cụ không đảm bảo vệ sinh"):
+        expansions.extend([
+            "115/2018/NĐ-CP xử phạt vi phạm hành chính về an toàn thực phẩm",
+            "115/2018/NĐ-CP Điều 16 điều kiện bảo đảm an toàn thực phẩm kinh doanh thức ăn đường phố",
+            "115/2018/NĐ-CP Điều 23 quảng cáo thực phẩm chức năng gây hiểu nhầm là thuốc chữa bệnh",
+        ])
+
+    # =========================
+    # Trang thiết bị y tế
+    # =========================
+    if has_any("trang thiết bị y tế", "thiết bị y tế", "giấy phép nhập khẩu trang thiết bị y tế"):
+        expansions.extend([
+            "98/2021/NĐ-CP quản lý trang thiết bị y tế",
+            "07/2023/NĐ-CP sửa đổi quản lý trang thiết bị y tế",
+            "giấy phép nhập khẩu trang thiết bị y tế",
+        ])
+
+    # =========================
+    # Giá / hiệp thương giá
+    # =========================
+    if has_any("hiệp thương giá", "thẩm quyền hiệp thương giá", "tổ chức hiệp thương giá"):
+        expansions.extend([
+            "16/2023/QH15 Luật Giá",
+            "85/2024/NĐ-CP quy định chi tiết Luật Giá",
+            "hiệp thương giá thẩm quyền trách nhiệm tổ chức hiệp thương giá",
+        ])
+
+    # =========================
+    # Du lịch
+    # =========================
+    if has_any("lữ hành", "du lịch", "dịch vụ lữ hành nội địa", "ký quỹ ngân hàng"):
+        expansions.extend([
+            "09/2017/QH14 Luật Du lịch",
+            "168/2017/NĐ-CP quy định chi tiết Luật Du lịch",
+            "điều kiện kinh doanh dịch vụ lữ hành nội địa ký quỹ",
+        ])
+
+    # =========================
+    # AI / công nghệ số / an ninh mạng
+    # =========================
+    if has_any("hệ thống ai", "trí tuệ nhân tạo", "ai", "công nghệ số", "sự cố nghiêm trọng", "an ninh mạng"):
+        expansions.extend([
+            "71/2025/QH15 Luật Công nghiệp công nghệ số",
+            "71/2025/QH15 Điều 43 quản lý hệ thống trí tuệ nhân tạo",
+            "24/2018/QH14 Luật An ninh mạng xử lý sự cố an ninh mạng dữ liệu khách hàng",
+        ])
+
+    # =========================
+    # Đấu thầu / CPTPP
+    # =========================
+    if has_any("đấu thầu", "gói thầu", "hồ sơ dự thầu", "mở thầu", "cptpp", "hiệp định cptpp"):
+        expansions.extend([
+            "22/2023/QH15 Luật Đấu thầu",
+            "214/2025/NĐ-CP lựa chọn nhà thầu",
+            "đấu thầu mua sắm theo Hiệp định CPTPP",
+            "mở thầu biên bản mở thầu hồ sơ nộp muộn đánh giá hồ sơ dự thầu",
+        ])
+
     if not expansions:
         return query
 

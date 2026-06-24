@@ -11,6 +11,10 @@ from sentence_transformers import SentenceTransformer
 from sentence_transformers.cross_encoder import CrossEncoder
 
 
+# ============================================================
+# Basic IO / dynamic imports
+# ============================================================
+
 def load_module_from_path(module_name: str, path: Path):
     spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)
@@ -24,8 +28,32 @@ def load_json(path: Path):
 
 
 def save_json(path: Path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_existing_outputs(output_file: Path):
+    if not output_file.exists():
+        return {}
+
+    try:
+        data = load_json(output_file)
+    except Exception:
+        return {}
+
+    if isinstance(data, list):
+        return {int(item["id"]): item for item in data if "id" in item}
+
+    return {}
+
+
+# ============================================================
+# Legal reference formatting
+# ============================================================
+
+def safere(text: str) -> str:
+    return re.escape(str(text))
 
 
 def normalize_doc_type(doc_type: str) -> str:
@@ -72,10 +100,6 @@ def clean_doc_title(title: str, doc_no: str = "") -> str:
     title = re.sub(r"\s+", " ", title).strip(" -|")
 
     return title
-
-
-def safere(text: str) -> str:
-    return re.escape(text)
 
 
 def parse_doc_from_retrieval_title(retrieval_title: str, doc_no: str):
@@ -235,6 +259,10 @@ def make_relevant_fields(contexts: list[dict], lookup: dict, max_docs: int, max_
     return relevant_docs, relevant_articles
 
 
+# ============================================================
+# Question complexity / context size
+# ============================================================
+
 def is_complex_question(question: str) -> bool:
     q = question.lower()
 
@@ -278,20 +306,626 @@ def choose_context_top_k(question: str, qa_module, args) -> int:
     return args.specific_context_top_k
 
 
-def postprocess_answer(answer: str) -> str:
-    answer = answer.strip()
+# ============================================================
+# Query decomposition
+# ============================================================
 
-    bad_phrases = [
-        "Yêu cầu định dạng câu trả lời đã được đáp ứng.",
-        "Yêu cầu định dạng đã được đáp ứng.",
+def build_retrieval_queries(question: str, max_queries: int = 4) -> list[str]:
+    """
+    Tách câu hỏi phức thành nhiều truy vấn nhỏ.
+    Luôn giữ câu hỏi gốc làm query đầu tiên.
+    """
+    q = " ".join(str(question).split()).strip()
+    if not q:
+        return []
+
+    queries = [q]
+
+    complex_markers = [
+        "đồng thời",
+        "ngoài ra",
+        "bên cạnh đó",
+        "mặt khác",
+        "và nếu",
+        "nếu ",
+        "trong trường hợp",
+        "thì ",
     ]
 
-    for phrase in bad_phrases:
-        answer = answer.replace(phrase, "")
+    q_lower = q.lower()
+    is_complex = (
+        len(q) >= 180
+        or sum(m in q_lower for m in complex_markers) >= 2
+        or q.count(",") >= 3
+    )
 
-    answer = re.sub(r"\n{3,}", "\n\n", answer).strip()
+    if not is_complex:
+        return queries
 
-    return answer
+    # Tách mềm theo các dấu hiệu câu phức
+    parts = re.split(
+        r"\bđồng thời\b|\bngoài ra\b|\bbên cạnh đó\b|\bmặt khác\b|;|\. ",
+        q,
+        flags=re.IGNORECASE,
+    )
+
+    for part in parts:
+        part = part.strip(" ,.;:")
+        if len(part) >= 35 and part not in queries:
+            queries.append(part)
+
+    # Nếu câu có nhiều cụm "và", tạo thêm các query theo vế có keyword pháp lý mạnh
+    chunks = re.split(r",|\bvà\b", q, flags=re.IGNORECASE)
+    legal_keywords = [
+        "hồ sơ",
+        "thủ tục",
+        "điều kiện",
+        "mức phạt",
+        "xử phạt",
+        "khắc phục",
+        "bồi thường",
+        "thời hạn",
+        "nghĩa vụ",
+        "trách nhiệm",
+        "hiệu lực",
+        "chấm dứt",
+        "đăng ký",
+        "thông báo",
+        "hóa đơn",
+        "thuế",
+        "bảo lãnh",
+        "hợp đồng",
+        "trọng tài",
+        "dữ liệu",
+        "quyền sở hữu",
+    ]
+
+    for chunk in chunks:
+        chunk = chunk.strip(" ,.;:")
+        if len(chunk) >= 35 and any(k in chunk.lower() for k in legal_keywords):
+            if chunk not in queries:
+                queries.append(chunk)
+
+    return queries[:max_queries]
+
+
+def get_result_key(result: dict) -> str:
+    refs = result.get("legal_reference_keys") or result.get("legal_refs") or []
+    if isinstance(refs, str):
+        refs = [refs]
+
+    parent_id = result.get("parent_article_id") or result.get("metadata", {}).get("parent_article_id")
+    chunk_id = result.get("chunk_id") or result.get("metadata", {}).get("chunk_id")
+
+    if refs:
+        # Lấy ref cấp điều, bỏ khoản/điểm nếu có
+        ref = refs[0]
+        parts = ref.split("|")
+        if len(parts) >= 2:
+            return parts[0] + "|" + parts[1]
+
+    if parent_id:
+        return str(parent_id)
+
+    if chunk_id:
+        return str(chunk_id)
+
+    return str(result.get("retrieval_title", ""))[:200]
+
+
+def merge_ranked_results(result_lists: list[list[dict]], max_results: int = 80) -> list[dict]:
+    """
+    Gộp kết quả từ query gốc + sub-query bằng RRF.
+    Query gốc có trọng số cao hơn.
+    """
+    merged = {}
+
+    for list_idx, results in enumerate(result_lists):
+        weight = 1.0 if list_idx == 0 else 0.75
+
+        for rank, result in enumerate(results, start=1):
+            key = get_result_key(result)
+            score = weight / (60 + rank)
+
+            if key not in merged:
+                copied = dict(result)
+                copied["_decomp_score"] = 0.0
+                copied["_matched_queries"] = []
+                copied["_best_source_rank"] = rank
+                merged[key] = copied
+
+            merged[key]["_decomp_score"] += score
+            merged[key]["_matched_queries"].append(list_idx)
+            merged[key]["_best_source_rank"] = min(
+                merged[key].get("_best_source_rank", rank),
+                rank,
+            )
+
+    final_results = list(merged.values())
+    final_results.sort(key=lambda x: x.get("_decomp_score", 0.0), reverse=True)
+
+    for idx, result in enumerate(final_results, start=1):
+        # Giữ field rank để tương thích với blend_ranking ở script 11
+        result["rank"] = idx
+        result["hybrid_rank"] = idx
+        result["hybrid_score"] = result.get("hybrid_score", result.get("_decomp_score", 0.0))
+
+    return final_results[:max_results]
+
+
+def run_decomposed_hybrid_search(
+    question: str,
+    hybrid_module,
+    chunks,
+    bm25,
+    dense_model,
+    dense_index,
+    bm25_top_k: int,
+    dense_top_k: int,
+    final_top_k: int,
+):
+    search_queries = build_retrieval_queries(question, max_queries=4)
+
+    result_lists = []
+    for search_query in search_queries:
+        sub_results = hybrid_module.hybrid_search(
+            query=search_query,
+            chunks=chunks,
+            bm25=bm25,
+            dense_model=dense_model,
+            dense_index=dense_index,
+            bm25_top_k=bm25_top_k,
+            dense_top_k=dense_top_k,
+            final_top_k=final_top_k,
+        )
+        result_lists.append([dict(r) for r in sub_results])
+
+    if len(result_lists) == 1:
+        results = result_lists[0]
+        for idx, result in enumerate(results, start=1):
+            result["rank"] = idx
+            result["hybrid_rank"] = idx
+        return results, search_queries
+
+    results = merge_ranked_results(
+        result_lists=result_lists,
+        max_results=final_top_k,
+    )
+
+    return results, search_queries
+
+
+# ============================================================
+# Domain prioritization / citation filtering
+# ============================================================
+
+def infer_question_domains(question: str) -> set[str]:
+    q = question.lower()
+    domains = set()
+
+    if any(x in q for x in [
+        "hộ kinh doanh",
+        "đăng ký doanh nghiệp",
+        "mã số doanh nghiệp",
+        "chi nhánh",
+        "văn phòng đại diện",
+        "vốn điều lệ",
+        "người đại diện theo pháp luật",
+    ]):
+        domains.add("business_registration")
+
+    if any(x in q for x in [
+        "doanh nghiệp nhỏ và vừa",
+        "nhỏ và vừa",
+        "dnnvv",
+        "quỹ bảo lãnh tín dụng",
+        "quỹ phát triển doanh nghiệp",
+        "khởi nghiệp sáng tạo",
+        "chuỗi giá trị",
+        "cụm liên kết ngành",
+    ]):
+        domains.add("sme_support")
+
+    if any(x in q for x in [
+        "thuế",
+        "hóa đơn",
+        "chứng từ",
+        "biên lai",
+        "mã số thuế",
+        "cơ quan thuế",
+        "lệ phí trước bạ",
+        "tiêu thụ đặc biệt",
+    ]):
+        domains.add("tax_invoice")
+
+    if any(x in q for x in [
+        "lao động",
+        "bảo hiểm xã hội",
+        "bhxh",
+        "công đoàn",
+        "hợp đồng lao động",
+        "tiền lương",
+        "đình công",
+        "an toàn vệ sinh lao động",
+        "tai nạn lao động",
+        "khám sức khỏe",
+        "kỷ luật lao động",
+    ]):
+        domains.add("labor")
+
+    if any(x in q for x in [
+        "sở hữu trí tuệ",
+        "sở hữu công nghiệp",
+        "nhãn hiệu",
+        "sáng chế",
+        "kiểu dáng công nghiệp",
+        "chỉ dẫn địa lý",
+        "quyền tác giả",
+        "quyền liên quan",
+        "văn bằng bảo hộ",
+        "tên thương mại",
+        "giống cây trồng",
+    ]):
+        domains.add("ip")
+
+    if any(x in q for x in [
+        "luật thương mại",
+        "hợp đồng thương mại",
+        "mua bán hàng hóa",
+        "giao hàng",
+        "thanh toán",
+        "phạt vi phạm",
+        "chế tài",
+        "đại lý",
+        "môi giới",
+        "nhượng quyền",
+        "khuyến mại",
+        "hội chợ",
+        "triển lãm",
+        "gia công hàng hóa",
+        "sở giao dịch hàng hóa",
+    ]):
+        domains.add("commercial")
+
+    if any(x in q for x in [
+        "dân sự",
+        "ủy quyền",
+        "uỷ quyền",
+        "thế chấp",
+        "tài sản bảo đảm",
+        "bảo đảm thực hiện nghĩa vụ",
+        "vận chuyển tài sản",
+        "vận chuyển hàng hóa",
+        "hợp đồng mua bán tài sản",
+        "hoàn cảnh thay đổi cơ bản",
+    ]):
+        domains.add("civil")
+
+    if any(x in q for x in [
+        "người tiêu dùng",
+        "khách hàng",
+        "bán hàng từ xa",
+        "dữ liệu khách hàng",
+        "thông tin khách hàng",
+        "hợp đồng theo mẫu",
+        "điều kiện giao dịch chung",
+        "sản phẩm có khuyết tật",
+        "khiếu nại từ khách hàng",
+    ]):
+        domains.add("consumer")
+
+    if any(x in q for x in [
+        "kế toán",
+        "kiểm toán",
+        "báo cáo tài chính",
+        "chứng chỉ kế toán viên",
+        "chứng chỉ kiểm toán viên",
+        "tài liệu kế toán",
+    ]):
+        domains.add("accounting_audit")
+
+    if any(x in q for x in [
+        "môi trường",
+        "giấy phép môi trường",
+        "nước thải",
+        "quan trắc",
+        "nhãn sinh thái",
+        "cụm công nghiệp",
+    ]):
+        domains.add("environment")
+
+    if any(x in q for x in [
+        "hải quan",
+        "xuất khẩu",
+        "nhập khẩu",
+        "xuất xứ",
+        "giấy chứng nhận xuất xứ",
+        "quà biếu",
+        "quà tặng",
+    ]):
+        domains.add("customs_trade")
+
+    if any(x in q for x in [
+        "an toàn thực phẩm",
+        "thực phẩm chức năng",
+        "trà sữa",
+        "dụng cụ vệ sinh",
+    ]):
+        domains.add("food_safety")
+
+    if any(x in q for x in [
+        "trang thiết bị y tế",
+        "thiết bị y tế",
+    ]):
+        domains.add("medical_device")
+
+    if any(x in q for x in [
+        "hiệp thương giá",
+        "luật giá",
+        "khung giá",
+    ]):
+        domains.add("price")
+
+    if any(x in q for x in [
+        "du lịch",
+        "lữ hành",
+    ]):
+        domains.add("tourism")
+
+    if any(x in q for x in [
+        "trí tuệ nhân tạo",
+        "hệ thống ai",
+        "công nghệ số",
+        "an ninh mạng",
+        "sự cố nghiêm trọng",
+    ]):
+        domains.add("digital_ai")
+
+    # "ai" quá ngắn, chỉ nhận khi đứng như một từ riêng
+    if re.search(r"\bai\b", q):
+        domains.add("digital_ai")
+
+    if any(x in q for x in [
+        "đấu thầu",
+        "gói thầu",
+        "hồ sơ dự thầu",
+        "cptpp",
+        "hiệp định cptpp",
+    ]):
+        domains.add("bidding")
+
+    if any(x in q for x in [
+        "xây dựng",
+        "giấy phép xây dựng",
+        "công trình",
+    ]):
+        domains.add("construction")
+
+    if any(x in q for x in [
+        "du lịch",
+        "vũ trường",
+        "karaoke",
+        "ngành nghề kinh doanh có điều kiện",
+        "an ninh, trật tự",
+    ]):
+        domains.add("conditional_business")
+
+    return domains
+
+
+DOMAIN_DOC_CODES = {
+    "business_registration": [
+        "59/2020/QH14",
+        "168/2025/NĐ-CP",
+    ],
+    "sme_support": [
+        "04/2017/QH14",
+        "80/2021/NĐ-CP",
+        "06/2022/TT-BKHDT",
+        "52/2023/TT-BTC",
+        "34/2018/NĐ-CP",
+        "39/2019/NĐ-CP",
+        "45/2018/TT-NHNN",
+        "57/2019/TT-BTC",
+        "132/2018/TT-BTC",
+    ],
+    "tax_invoice": [
+        "38/2019/QH14",
+        "126/2020/NĐ-CP",
+        "123/2020/NĐ-CP",
+        "70/2025/NĐ-CP",
+        "105/2020/TT-BTC",
+        "80/2021/TT-BTC",
+        "40/2021/TT-BTC",
+        "320/2025/NĐ-CP",
+        "67/2025/QH15",
+        "125/2020/NĐ-CP",
+        "181/2025/NĐ-CP",
+    ],
+    "labor": [
+        "45/2019/QH14",
+        "145/2020/NĐ-CP",
+        "12/2022/NĐ-CP",
+        "50/2024/QH15",
+        "84/2015/QH13",
+        "44/2016/NĐ-CP",
+        "25/2022/TT-BLĐTBXH",
+        "09/2020/TT-BLĐTBXH",
+        "28/2021/TT-BLĐTBXH",
+        "19/2016/TT-BYT",
+    ],
+    "ip": [
+        "50/2005/QH11",
+        "07/2022/QH15",
+    ],
+    "commercial": [
+        "36/2005/QH11",
+        "35/2006/NĐ-CP",
+        "09/2006/TT-BTM",
+        "59/2015/TT-BCT",
+        "69/2018/NĐ-CP",
+    ],
+    "civil": [
+        "91/2015/QH13",
+        "21/2021/NĐ-CP",
+    ],
+    "consumer": [
+        "19/2023/QH15",
+        "55/2024/NĐ-CP",
+        "98/2020/NĐ-CP",
+        "24/2025/NĐ-CP",
+        "52/2013/NĐ-CP",
+        "75/2025/QH15",
+    ],
+    "accounting_audit": [
+        "88/2015/QH13",
+        "67/2011/QH12",
+        "41/2018/NĐ-CP",
+        "133/2016/TT-BTC",
+        "132/2018/TT-BTC",
+    ],
+    "environment": [
+        "72/2020/QH14",
+        "08/2022/NĐ-CP",
+        "68/2017/NĐ-CP",
+    ],
+    "customs_trade": [
+        "54/2014/QH13",
+        "107/2016/QH13",
+        "69/2018/NĐ-CP",
+    ],
+    "food_safety": [
+        "115/2018/NĐ-CP",
+    ],
+    "medical_device": [
+        "98/2021/NĐ-CP",
+        "07/2023/NĐ-CP",
+    ],
+    "price": [
+        "16/2023/QH15",
+        "85/2024/NĐ-CP",
+    ],
+    "tourism": [
+        "09/2017/QH14",
+        "168/2017/NĐ-CP",
+    ],
+    "digital_ai": [
+        "71/2025/QH15",
+        "24/2018/QH14",
+    ],
+    "bidding": [
+        "22/2023/QH15",
+        "214/2025/NĐ-CP",
+    ],
+    "construction": [
+        "50/2014/QH13",
+        "06/2021/NĐ-CP",
+    ],
+    "conditional_business": [
+        "96/2016/NĐ-CP",
+        "54/2019/NĐ-CP",
+        "09/2017/QH14",
+        "168/2017/NĐ-CP",
+    ],
+}
+
+
+def result_text_for_domain(result: dict) -> str:
+    refs = result.get("legal_reference_keys") or result.get("legal_refs") or []
+    if isinstance(refs, str):
+        refs = [refs]
+
+    fields = [
+        " ".join(refs),
+        str(result.get("retrieval_title", "")),
+        str(result.get("citation", "")),
+        str(result.get("title", "")),
+        str(result.get("doc_title", "")),
+    ]
+
+    meta = result.get("metadata") or {}
+    fields.extend([
+        str(meta.get("doc_no", "")),
+        str(meta.get("doc_title", "")),
+        str(meta.get("document_title", "")),
+    ])
+
+    return " ".join(fields)
+
+
+def result_belongs_to_domains(result: dict, domains: set[str]) -> bool:
+    if not domains:
+        return True
+
+    text = result_text_for_domain(result)
+
+    for domain in domains:
+        for code in DOMAIN_DOC_CODES.get(domain, []):
+            if code in text:
+                return True
+
+    return False
+
+
+def prioritize_results_by_domain(question: str, results: list[dict], min_domain_results: int = 3) -> list[dict]:
+    """
+    Đưa kết quả đúng domain lên trước, không xóa hoàn toàn kết quả ngoài domain.
+    Cách này an toàn hơn hard filter.
+    """
+    domains = infer_question_domains(question)
+
+    if not domains:
+        return results
+
+    good = []
+    bad = []
+
+    for result in results:
+        if result_belongs_to_domains(result, domains):
+            good.append(result)
+        else:
+            bad.append(result)
+
+    if len(good) < min_domain_results:
+        return results
+
+    ordered = good + bad
+
+    for idx, result in enumerate(ordered, start=1):
+        result["rank"] = idx
+        result["hybrid_rank"] = idx
+
+    return ordered
+
+
+def filter_relevant_by_domain(question: str, relevant_docs: list[str], relevant_articles: list[str]):
+    domains = infer_question_domains(question)
+
+    if not domains:
+        return relevant_docs, relevant_articles
+
+    def ref_ok(ref: str) -> bool:
+        return any(
+            code in ref
+            for domain in domains
+            for code in DOMAIN_DOC_CODES.get(domain, [])
+        )
+
+    filtered_articles = [ref for ref in relevant_articles if ref_ok(ref)]
+
+    # Nếu filter làm rỗng thì giữ nguyên để tránh mất hết căn cứ
+    if not filtered_articles:
+        return relevant_docs, relevant_articles
+
+    allowed_docs = set(ref.split("|")[0] for ref in filtered_articles)
+    filtered_docs = [doc for doc in relevant_docs if doc.split("|")[0] in allowed_docs]
+
+    return filtered_docs, filtered_articles
+
+
+# ============================================================
+# Context focusing
+# ============================================================
 
 def extract_focus_terms(question: str) -> list[str]:
     q = question.lower()
@@ -299,7 +933,6 @@ def extract_focus_terms(question: str) -> list[str]:
 
     phrase_map = [
         "chậm đóng bảo hiểm xã hội",
-        "chậm đóng",
         "bảo hiểm xã hội bắt buộc",
         "giữ bản chính",
         "bằng cấp",
@@ -308,13 +941,19 @@ def extract_focus_terms(question: str) -> list[str]:
         "khắc phục",
         "mức hỗ trợ",
         "hỗ trợ tư vấn",
-        "tư vấn",
         "mức phạt",
         "xử phạt",
         "buộc",
         "trả lại",
         "điều kiện cấp bảo lãnh",
         "cấp bảo lãnh tín dụng",
+        "phạt vi phạm",
+        "bồi thường thiệt hại",
+        "thời hạn",
+        "hồ sơ",
+        "thủ tục",
+        "nghĩa vụ",
+        "trách nhiệm",
     ]
 
     for phrase in phrase_map:
@@ -326,7 +965,7 @@ def extract_focus_terms(question: str) -> list[str]:
         if len(token) >= 5 and token not in terms:
             terms.append(token)
 
-    return terms[:20]
+    return terms[:24]
 
 
 def focus_content_by_question(content: str, question: str, max_chars: int) -> str:
@@ -348,20 +987,25 @@ def focus_content_by_question(content: str, question: str, max_chars: int) -> st
     best_pos = -1
     best_score = -1
 
+    priority_terms = {
+        "chậm đóng bảo hiểm xã hội",
+        "bảo hiểm xã hội bắt buộc",
+        "giữ bản chính",
+        "mức hỗ trợ",
+        "hỗ trợ tư vấn",
+        "điều kiện cấp bảo lãnh",
+        "cấp bảo lãnh tín dụng",
+        "phạt vi phạm",
+        "bồi thường thiệt hại",
+    }
+
     for term in terms:
         pos = lower_content.find(term.lower())
 
         if pos >= 0:
             score = len(term)
 
-            # ưu tiên các cụm đặc thù
-            if term in [
-                "chậm đóng bảo hiểm xã hội",
-                "giữ bản chính",
-                "mức hỗ trợ",
-                "hỗ trợ tư vấn",
-                "điều kiện cấp bảo lãnh",
-            ]:
+            if term in priority_terms:
                 score += 100
 
             if score > best_score:
@@ -388,19 +1032,26 @@ def focus_content_by_question(content: str, question: str, max_chars: int) -> st
 
     return snippet
 
-def load_existing_outputs(output_file: Path):
-    if not output_file.exists():
-        return {}
 
-    try:
-        data = load_json(output_file)
-    except Exception:
-        return {}
+# ============================================================
+# Answer post-processing
+# ============================================================
 
-    if isinstance(data, list):
-        return {int(item["id"]): item for item in data if "id" in item}
+def postprocess_answer(answer: str) -> str:
+    answer = answer.strip()
 
-    return {}
+    bad_phrases = [
+        "Yêu cầu định dạng câu trả lời đã được đáp ứng.",
+        "Yêu cầu định dạng đã được đáp ứng.",
+    ]
+
+    for phrase in bad_phrases:
+        answer = answer.replace(phrase, "")
+
+    answer = re.sub(r"\n{3,}", "\n\n", answer).strip()
+
+    return answer
+
 
 def apply_answer_guard(question: str, answer: str, relevant_articles: list[str]) -> str:
     """
@@ -414,8 +1065,6 @@ def apply_answer_guard(question: str, answer: str, relevant_articles: list[str])
     ans_lower = ans.lower()
     refs_text = "\n".join(relevant_articles)
 
-    # Nếu câu hỏi hỏi Có/Không mà answer không bắt đầu rõ ràng,
-    # thêm mở đầu nhẹ dựa trên nội dung answer, không tự thêm căn cứ mới.
     yes_no_markers = [
         "có bị",
         "có phải",
@@ -432,8 +1081,6 @@ def apply_answer_guard(question: str, answer: str, relevant_articles: list[str])
             elif any(x in ans_lower for x in ["không bắt buộc", "không phải", "không cần"]):
                 ans = "Không. " + ans[0].lower() + ans[1:]
 
-    # Nếu hỏi mức phạt/mức hỗ trợ/thời hạn mà answer không có số,
-    # không bịa số, chỉ cảnh báo theo căn cứ.
     numeric_question_markers = [
         "bao nhiêu",
         "mức phạt",
@@ -454,8 +1101,6 @@ def apply_answer_guard(question: str, answer: str, relevant_articles: list[str])
                 "cần đối chiếu trực tiếp căn cứ pháp lý được trích dẫn để xác định chính xác."
             )
 
-    # Nếu hỏi biện pháp khắc phục mà answer thiếu từ khóa khắc phục,
-    # thêm câu nhắc chung, không bịa biện pháp cụ thể.
     if any(m in q for m in ["khắc phục", "biện pháp khắc phục"]):
         if not any(m in ans_lower for m in ["khắc phục", "buộc", "trả lại", "nộp lại", "hoàn thành thủ tục"]):
             ans += (
@@ -463,8 +1108,6 @@ def apply_answer_guard(question: str, answer: str, relevant_articles: list[str])
                 "được quy định tại căn cứ pháp lý tương ứng."
             )
 
-    # Nếu câu hỏi hỏi xử phạt nhưng answer kết luận không vi phạm,
-    # trong khi căn cứ là nghị định xử phạt, làm mềm kết luận.
     if (
         any(m in q for m in ["có bị phạt", "bị xử phạt", "xử lý như thế nào"])
         and "12/2022/NĐ-CP" in refs_text
@@ -476,6 +1119,7 @@ def apply_answer_guard(question: str, answer: str, relevant_articles: list[str])
         )
 
     return ans
+
 
 def ensure_full_citations_in_answer(answer: str, relevant_articles: list[str]) -> str:
     answer = answer.strip()
@@ -502,215 +1146,11 @@ def ensure_full_citations_in_answer(answer: str, relevant_articles: list[str]) -
         + "\n\nCăn cứ pháp lý:\n"
         + refs
     )
-    
-def override_references_for_known_cases(
-    question: str,
-    relevant_docs: list[str],
-    relevant_articles: list[str],
-):
-    """
-    Ép lại căn cứ cho một số pattern dễ bị retrieval kéo nhầm.
-    Chỉ dùng cho các case đã thấy sai rõ trong test100.
-    """
-    q = question.lower()
-
-    def pack(doc_no: str, doc_name: str, article: str):
-        return (
-            [f"{doc_no}|{doc_name}"],
-            [f"{doc_no}|{doc_name}|{article}"],
-        )
-
-    # ID 65 - không khám sức khỏe định kỳ
-    if (
-        "không tổ chức khám sức khỏe định kỳ" in q
-        or ("khám sức khỏe định kỳ" in q and ("xử phạt" in q or "bị phạt" in q))
-    ):
-        return pack(
-            "12/2022/NĐ-CP",
-            "Nghị định 12/2022/NĐ-CP Quy định xử phạt vi phạm hành chính trong lĩnh vực lao động, bảo hiểm xã hội, người lao động Việt Nam đi làm việc ở nước ngoài theo hợp đồng",
-            "Điều 22",
-        )
-
-    # ID 71 - hình thức xử phạt chính
-    if (
-        "hình thức xử phạt chính" in q
-        and ("lao động" in q or "bảo hiểm xã hội" in q)
-    ):
-        return pack(
-            "12/2022/NĐ-CP",
-            "Nghị định 12/2022/NĐ-CP Quy định xử phạt vi phạm hành chính trong lĩnh vực lao động, bảo hiểm xã hội, người lao động Việt Nam đi làm việc ở nước ngoài theo hợp đồng",
-            "Điều 3",
-        )
-
-    # ID 79 - không trả sổ BHXH
-    if (
-        "không trả sổ bảo hiểm xã hội" in q
-        or "không trả sổ bhxh" in q
-        or ("sổ bảo hiểm xã hội" in q and "chấm dứt hợp đồng" in q)
-    ):
-        return pack(
-            "12/2022/NĐ-CP",
-            "Nghị định 12/2022/NĐ-CP Quy định xử phạt vi phạm hành chính trong lĩnh vực lao động, bảo hiểm xã hội, người lao động Việt Nam đi làm việc ở nước ngoài theo hợp đồng",
-            "Điều 12",
-        )
-
-    # ID 83 - không cho cán bộ công đoàn vào tuyên truyền
-    if (
-        "cán bộ công đoàn" in q
-        and ("tuyên truyền" in q or "thành lập công đoàn" in q)
-    ):
-        docs = [
-            "50/2024/QH15|Luật 50/2024/QH15 CÔNG ĐOÀN",
-            "12/2022/NĐ-CP|Nghị định 12/2022/NĐ-CP Quy định xử phạt vi phạm hành chính trong lĩnh vực lao động, bảo hiểm xã hội, người lao động Việt Nam đi làm việc ở nước ngoài theo hợp đồng",
-        ]
-
-        articles = [
-            "50/2024/QH15|Luật 50/2024/QH15 CÔNG ĐOÀN|Điều 19",
-            "12/2022/NĐ-CP|Nghị định 12/2022/NĐ-CP Quy định xử phạt vi phạm hành chính trong lĩnh vực lao động, bảo hiểm xã hội, người lao động Việt Nam đi làm việc ở nước ngoài theo hợp đồng|Điều 35",
-        ]
-
-        return docs, articles
-
-    # ID 89 - hóa đơn điện tử không có mã
-    if (
-        "hóa đơn điện tử không có mã" in q
-        or "không có mã của cơ quan thuế" in q
-    ):
-        docs = [
-            "38/2019/QH14|Luật 38/2019/QH14 QUẢN LÝ THUẾ",
-            "123/2020/NĐ-CP|Nghị định 123/2020/NĐ-CP Quy định về hóa đơn, chứng từ",
-        ]
-
-        articles = [
-            "38/2019/QH14|Luật 38/2019/QH14 QUẢN LÝ THUẾ|Điều 91",
-            "123/2020/NĐ-CP|Nghị định 123/2020/NĐ-CP Quy định về hóa đơn, chứng từ|Điều 18",
-        ]
-
-        return docs, articles
-
-    return relevant_docs, relevant_articles
-
-def infer_question_domain(question: str) -> str | None:
-    q = question.lower()
-
-    if any(x in q for x in [
-        "sở hữu trí tuệ",
-        "sở hữu công nghiệp",
-        "nhãn hiệu",
-        "sáng chế",
-        "kiểu dáng công nghiệp",
-        "chỉ dẫn địa lý",
-        "quyền tác giả",
-        "văn bằng bảo hộ",
-        "tên thương mại",
-        "giống cây trồng",
-    ]):
-        return "ip"
-
-    if any(x in q for x in [
-        "thuế",
-        "hóa đơn",
-        "chứng từ",
-        "mã số thuế",
-        "biên lai",
-        "cơ quan thuế",
-    ]):
-        return "tax"
-
-    if any(x in q for x in [
-        "lao động",
-        "bảo hiểm xã hội",
-        "bhxh",
-        "hợp đồng lao động",
-        "công đoàn",
-        "an toàn vệ sinh lao động",
-        "khám sức khỏe",
-        "tai nạn lao động",
-    ]):
-        return "labor"
-
-    if any(x in q for x in [
-        "doanh nghiệp nhỏ và vừa",
-        "nhỏ và vừa",
-        "dnnvv",
-        "hỗ trợ doanh nghiệp",
-        "quỹ bảo lãnh tín dụng",
-        "quỹ phát triển doanh nghiệp",
-        "khởi nghiệp sáng tạo",
-        "chuỗi giá trị",
-        "cụm liên kết ngành",
-    ]):
-        return "sme_support"
-
-    return None
 
 
-def ref_belongs_to_domain(ref: str, domain: str | None) -> bool:
-    if domain is None:
-        return True
-
-    if domain == "ip":
-        return any(code in ref for code in [
-            "50/2005/QH11",
-            "07/2022/QH15",
-        ])
-
-    if domain == "tax":
-        return any(code in ref for code in [
-            "38/2019/QH14",
-            "126/2020/NĐ-CP",
-            "123/2020/NĐ-CP",
-            "70/2025/NĐ-CP",
-            "105/2020/TT-BTC",
-            "80/2021/TT-BTC",
-            "40/2021/TT-BTC",
-            "320/2025/NĐ-CP",
-        ])
-
-    if domain == "labor":
-        return any(code in ref for code in [
-            "12/2022/NĐ-CP",
-            "45/2019/QH14",
-            "50/2024/QH15",
-        ])
-
-    if domain == "sme_support":
-        return any(code in ref for code in [
-            "04/2017/QH14",
-            "80/2021/NĐ-CP",
-            "06/2022/TT-BKHDT",
-            "52/2023/TT-BTC",
-            "34/2018/NĐ-CP",
-            "39/2019/NĐ-CP",
-            "132/2018/TT-BTC",
-        ])
-
-    return True
-
-
-def filter_relevant_by_domain(question: str, relevant_docs: list[str], relevant_articles: list[str]):
-    domain = infer_question_domain(question)
-
-    if domain is None:
-        return relevant_docs, relevant_articles
-
-    filtered_articles = [
-        ref for ref in relevant_articles
-        if ref_belongs_to_domain(ref, domain)
-    ]
-
-    # Nếu filter làm rỗng thì giữ nguyên để tránh mất hết căn cứ
-    if not filtered_articles:
-        return relevant_docs, relevant_articles
-
-    allowed_doc_keys = set(ref.split("|")[0] for ref in filtered_articles)
-
-    filtered_docs = [
-        doc for doc in relevant_docs
-        if doc.split("|")[0] in allowed_doc_keys
-    ]
-
-    return filtered_docs, filtered_articles
+# ============================================================
+# Main pipeline
+# ============================================================
 
 def main():
     parser = argparse.ArgumentParser()
@@ -922,8 +1362,9 @@ def main():
         print("Q:", question)
         print("Context top k:", context_top_k)
 
-        hybrid_results = hybrid.hybrid_search(
-            query=question,
+        results, search_queries = run_decomposed_hybrid_search(
+            question=question,
+            hybrid_module=hybrid,
             chunks=chunks,
             bm25=bm25,
             dense_model=dense_model,
@@ -933,7 +1374,10 @@ def main():
             final_top_k=args.candidate_top_k,
         )
 
-        results = [dict(r) for r in hybrid_results]
+        results = prioritize_results_by_domain(
+            question=question,
+            results=results,
+        )
 
         if reranker is not None:
             results = qa.rerank_with_loaded_model(
@@ -960,6 +1404,12 @@ def main():
                 reverse=True,
             )
 
+        # Domain priority thêm một lần sau rerank/blend để tránh reranker kéo lệch domain lên quá cao.
+        results = prioritize_results_by_domain(
+            question=question,
+            results=results,
+        )
+
         selected = qa.deduplicate_contexts(
             results=results,
             top_k=context_top_k,
@@ -970,7 +1420,7 @@ def main():
             lookup=lookup,
             max_context_chars=args.max_context_chars,
         )
-        
+
         for block in context_blocks:
             block["content"] = focus_content_by_question(
                 content=block.get("content", ""),
@@ -989,26 +1439,27 @@ def main():
             max_docs=args.max_docs,
             max_articles=args.max_articles,
         )
-        
+
         relevant_docs, relevant_articles = filter_relevant_by_domain(
             question=question,
             relevant_docs=relevant_docs,
             relevant_articles=relevant_articles,
         )
-        
-        relevant_docs, relevant_articles = override_references_for_known_cases(
-            question=question,
-            relevant_docs=relevant_docs,
-            relevant_articles=relevant_articles,
-        )
 
-        print("Top context:", context_blocks[0]["legal_reference_keys"], "|", context_blocks[0]["retrieval_title"])
+        if context_blocks:
+            print("Search queries:", search_queries)
+            print("Top context:", context_blocks[0].get("legal_reference_keys"), "|", context_blocks[0].get("retrieval_title"))
+        else:
+            print("Search queries:", search_queries)
+            print("Top context: NONE")
+
         print("Relevant articles:", relevant_articles[:3])
 
         prepared_items.append({
             "id": qid,
             "question": question,
             "context_top_k": context_top_k,
+            "search_queries": search_queries,
             "contexts": context_blocks,
             "prompt": prompt,
             "relevant_docs": relevant_docs,
@@ -1059,18 +1510,18 @@ def main():
         )
 
         answer = postprocess_answer(answer)
-        
+
         answer = apply_answer_guard(
             question=question,
             answer=answer,
             relevant_articles=item["relevant_articles"],
         )
-        
+
         answer = ensure_full_citations_in_answer(
             answer=answer,
             relevant_articles=item["relevant_articles"],
         )
-        
+
         submission_item = {
             "id": qid,
             "question": question,
@@ -1084,6 +1535,7 @@ def main():
         debug_outputs.append({
             **submission_item,
             "context_top_k": item["context_top_k"],
+            "search_queries": item["search_queries"],
             "contexts": item["contexts"],
         })
 
