@@ -1,0 +1,691 @@
+import argparse
+import gc
+import importlib.util
+import json
+import re
+from pathlib import Path
+
+import faiss
+import torch
+from sentence_transformers import SentenceTransformer
+from sentence_transformers.cross_encoder import CrossEncoder
+
+
+def load_module_from_path(module_name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_json(path: Path):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_json(path: Path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def normalize_doc_type(doc_type: str) -> str:
+    if not doc_type:
+        return "Văn bản"
+
+    t = " ".join(str(doc_type).split()).strip().lower()
+
+    mapping = {
+        "luật": "Luật",
+        "bộ luật": "Bộ luật",
+        "nghị định": "Nghị định",
+        "thông tư": "Thông tư",
+        "pháp lệnh": "Pháp lệnh",
+        "nghị quyết": "Nghị quyết",
+        "quyết định": "Quyết định",
+    }
+
+    return mapping.get(t, str(doc_type).strip().title())
+
+
+def clean_doc_title(title: str, doc_no: str = "") -> str:
+    if not title:
+        return ""
+
+    title = " ".join(str(title).split()).strip()
+
+    if doc_no:
+        title = re.sub(rf"\b{safere(doc_no)}\b", "", title, flags=re.IGNORECASE)
+
+    title = re.sub(r"\bsố\b", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"\s+", " ", title).strip(" -|")
+
+    return title
+
+
+def safere(text: str) -> str:
+    return re.escape(text)
+
+
+def parse_doc_from_retrieval_title(retrieval_title: str, doc_no: str):
+    """
+    Parse fallback từ title dạng:
+    'Nghị Định Về đăng ký doanh nghiệp số 168/2025/NĐ-CP | Chương I | Điều 10...'
+    """
+    if not retrieval_title:
+        return {
+            "document_type": "Văn bản",
+            "document_title": "",
+        }
+
+    head = retrieval_title.split("|")[0].strip()
+
+    doc_type_candidates = [
+        "Bộ Luật",
+        "Luật",
+        "Nghị Định",
+        "Thông Tư",
+        "Pháp Lệnh",
+        "Nghị Quyết",
+        "Quyết Định",
+    ]
+
+    for cand in doc_type_candidates:
+        if head.lower().startswith(cand.lower()):
+            rest = head[len(cand):].strip()
+
+            if doc_no:
+                rest = re.sub(
+                    rf"\s+số\s+{safere(doc_no)}",
+                    "",
+                    rest,
+                    flags=re.IGNORECASE,
+                )
+                rest = rest.replace(doc_no, "")
+
+            return {
+                "document_type": normalize_doc_type(cand),
+                "document_title": clean_doc_title(rest, doc_no),
+            }
+
+    return {
+        "document_type": "Văn bản",
+        "document_title": clean_doc_title(head, doc_no),
+    }
+
+
+def normalize_article_ref(ref: str):
+    """
+    Input có thể là:
+    123/2020/NĐ-CP|Điều 15
+    123/2020/NĐ-CP|Điều 15|Khoản 5
+
+    Output:
+    doc_no, article, normalized_ref
+    """
+    if not ref:
+        return None
+
+    parts = str(ref).split("|")
+
+    if len(parts) < 2:
+        return None
+
+    doc_no = parts[0].strip()
+    article = parts[1].strip()
+
+    if not doc_no or not article.lower().startswith("điều"):
+        return None
+
+    normalized_ref = f"{doc_no}|{article}"
+
+    return {
+        "doc_no": doc_no,
+        "article": article,
+        "normalized_ref": normalized_ref,
+    }
+
+
+def get_doc_info_for_ref(ref: str, context: dict, lookup: dict):
+    norm = normalize_article_ref(ref)
+
+    if not norm:
+        return None
+
+    doc_no = norm["doc_no"]
+
+    chunk = None
+
+    # Ưu tiên ref đầy đủ
+    if ref in lookup["by_ref"]:
+        chunk = lookup["by_ref"][ref]
+
+    # Sau đó thử ref đã strip Khoản/Điểm
+    if chunk is None and norm["normalized_ref"] in lookup["by_ref"]:
+        chunk = lookup["by_ref"][norm["normalized_ref"]]
+
+    metadata = chunk.get("metadata", {}) if chunk else {}
+
+    doc_type = metadata.get("document_type") or metadata.get("type") or ""
+    doc_title = metadata.get("document_title") or metadata.get("title") or ""
+
+    if not doc_type or not doc_title:
+        parsed = parse_doc_from_retrieval_title(
+            context.get("retrieval_title", ""),
+            doc_no,
+        )
+
+        doc_type = doc_type or parsed["document_type"]
+        doc_title = doc_title or parsed["document_title"]
+
+    doc_type = normalize_doc_type(doc_type)
+    doc_title = clean_doc_title(doc_title, doc_no)
+
+    if doc_title:
+        formatted_doc_name = f"{doc_type} {doc_no} {doc_title}".strip()
+    else:
+        formatted_doc_name = f"{doc_type} {doc_no}".strip()
+
+    return {
+        "doc_no": doc_no,
+        "document_name": formatted_doc_name,
+        "article": norm["article"],
+        "normalized_ref": norm["normalized_ref"],
+    }
+
+
+def make_relevant_fields(contexts: list[dict], lookup: dict, max_docs: int, max_articles: int):
+    relevant_docs = []
+    relevant_articles = []
+
+    seen_docs = set()
+    seen_articles = set()
+
+    for ctx in contexts:
+        refs = ctx.get("legal_reference_keys", []) or []
+
+        for ref in refs:
+            info = get_doc_info_for_ref(ref, ctx, lookup)
+
+            if not info:
+                continue
+
+            doc_item = f"{info['doc_no']}|{info['document_name']}"
+            article_item = f"{info['doc_no']}|{info['document_name']}|{info['article']}"
+
+            if doc_item not in seen_docs and len(relevant_docs) < max_docs:
+                seen_docs.add(doc_item)
+                relevant_docs.append(doc_item)
+
+            if article_item not in seen_articles and len(relevant_articles) < max_articles:
+                seen_articles.add(article_item)
+                relevant_articles.append(article_item)
+
+    return relevant_docs, relevant_articles
+
+
+def is_complex_question(question: str) -> bool:
+    q = question.lower()
+
+    complex_signals = [
+        "đồng thời",
+        "khác gì",
+        "khác nhau",
+        "so với",
+        "vừa",
+        "cùng với",
+        "một mặt",
+        "mặt khác",
+        "và nếu",
+        "và khi",
+        "thì ... và",
+    ]
+
+    if len(q) >= 180:
+        return True
+
+    if any(signal in q for signal in complex_signals):
+        return True
+
+    # Câu có nhiều vế pháp lý, thường cần nhiều điều luật
+    if q.count(" và ") >= 2:
+        return True
+
+    return False
+
+
+def choose_context_top_k(question: str, qa_module, args) -> int:
+    if is_complex_question(question):
+        return args.complex_context_top_k
+
+    if qa_module.is_broad_question(question):
+        return args.broad_context_top_k
+
+    return args.specific_context_top_k
+
+
+def postprocess_answer(answer: str) -> str:
+    answer = answer.strip()
+
+    bad_phrases = [
+        "Yêu cầu định dạng câu trả lời đã được đáp ứng.",
+        "Yêu cầu định dạng đã được đáp ứng.",
+    ]
+
+    for phrase in bad_phrases:
+        answer = answer.replace(phrase, "")
+
+    answer = re.sub(r"\n{3,}", "\n\n", answer).strip()
+
+    return answer
+
+
+def load_existing_outputs(output_file: Path):
+    if not output_file.exists():
+        return {}
+
+    try:
+        data = load_json(output_file)
+    except Exception:
+        return {}
+
+    if isinstance(data, list):
+        return {int(item["id"]): item for item in data if "id" in item}
+
+    return {}
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--test_file",
+        type=str,
+        required=True,
+        help="File JSON test set gồm id và question.",
+    )
+
+    parser.add_argument(
+        "--artifact_dir",
+        type=str,
+        default="/kaggle/working/artifacts",
+    )
+
+    parser.add_argument(
+        "--output_file",
+        type=str,
+        default="/kaggle/working/artifacts/submission.json",
+    )
+
+    parser.add_argument(
+        "--debug_file",
+        type=str,
+        default="/kaggle/working/artifacts/submission_debug.json",
+    )
+
+    parser.add_argument(
+        "--embedding_model_name",
+        type=str,
+        default="BAAI/bge-m3",
+    )
+
+    parser.add_argument(
+        "--reranker_model_name",
+        type=str,
+        default="BAAI/bge-reranker-v2-m3",
+    )
+
+    parser.add_argument(
+        "--llm_model_name",
+        type=str,
+        default="Qwen/Qwen2.5-3B-Instruct",
+    )
+
+    parser.add_argument(
+        "--load_llm_in_4bit",
+        type=int,
+        default=0,
+    )
+
+    parser.add_argument(
+        "--use_reranker",
+        type=int,
+        default=1,
+    )
+
+    parser.add_argument("--bm25_top_k", type=int, default=100)
+    parser.add_argument("--dense_top_k", type=int, default=100)
+    parser.add_argument("--candidate_top_k", type=int, default=40)
+
+    parser.add_argument("--specific_context_top_k", type=int, default=1)
+    parser.add_argument("--broad_context_top_k", type=int, default=4)
+    parser.add_argument("--complex_context_top_k", type=int, default=7)
+
+    parser.add_argument("--hybrid_weight", type=float, default=0.75)
+    parser.add_argument("--reranker_weight", type=float, default=0.25)
+
+    parser.add_argument("--max_reranker_chars", type=int, default=3500)
+    parser.add_argument("--max_context_chars", type=int, default=4500)
+
+    parser.add_argument("--max_new_tokens", type=int, default=800)
+    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--top_p", type=float, default=0.9)
+    parser.add_argument("--repetition_penalty", type=float, default=1.05)
+
+    parser.add_argument("--max_docs", type=int, default=5)
+    parser.add_argument("--max_articles", type=int, default=8)
+
+    parser.add_argument("--offset", type=int, default=0)
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="0 nghĩa là chạy toàn bộ.",
+    )
+
+    parser.add_argument(
+        "--resume",
+        type=int,
+        default=1,
+        help="Nếu output_file đã có, bỏ qua các id đã xử lý.",
+    )
+
+    parser.add_argument("--save_every", type=int, default=20)
+
+    args = parser.parse_args()
+
+    root_dir = Path(__file__).resolve().parents[1]
+    artifact_dir = Path(args.artifact_dir)
+
+    test_file = Path(args.test_file)
+    output_file = Path(args.output_file)
+    debug_file = Path(args.debug_file)
+
+    if not test_file.exists():
+        raise FileNotFoundError(f"Không tìm thấy test_file: {test_file}")
+
+    hybrid = load_module_from_path(
+        "hybrid_retrieval",
+        root_dir / "scripts" / "04_hybrid_retrieval.py",
+    )
+
+    qa = load_module_from_path(
+        "manual_qa_pipeline",
+        root_dir / "scripts" / "11_run_manual_qa_eval.py",
+    )
+
+    print("[INFO] Test file:", test_file)
+    print("[INFO] Artifact dir:", artifact_dir)
+    print("[INFO] Output file:", output_file)
+    print("[INFO] Debug file:", debug_file)
+
+    test_items = load_json(test_file)
+
+    if not isinstance(test_items, list):
+        raise ValueError("test_file phải là JSON list các object có id và question.")
+
+    test_items = test_items[args.offset:]
+
+    if args.limit and args.limit > 0:
+        test_items = test_items[:args.limit]
+
+    print("[INFO] Questions to process:", len(test_items))
+
+    existing_outputs = {}
+
+    if args.resume:
+        existing_outputs = load_existing_outputs(output_file)
+        print("[INFO] Existing outputs loaded:", len(existing_outputs))
+
+    pending_items = [
+        item for item in test_items
+        if int(item["id"]) not in existing_outputs
+    ]
+
+    print("[INFO] Pending questions:", len(pending_items))
+
+    # Nếu không còn gì phải chạy thì save lại cho chắc
+    if not pending_items:
+        final_outputs = [existing_outputs[int(item["id"])] for item in test_items]
+        save_json(output_file, final_outputs)
+        print("[INFO] Nothing to do. Saved existing outputs.")
+        return
+
+    bm25_path = artifact_dir / "bm25.pkl"
+    chunks_path = artifact_dir / "chunks.pkl"
+    dense_index_path = artifact_dir / "dense_faiss.index"
+
+    print("[INFO] Loading BM25:", bm25_path)
+    bm25 = hybrid.load_pickle(bm25_path)
+
+    print("[INFO] Loading chunks:", chunks_path)
+    chunks = hybrid.load_pickle(chunks_path)
+
+    print("[INFO] Building lookup")
+    lookup = qa.build_chunk_lookup(chunks)
+
+    print("[INFO] Loading dense index:", dense_index_path)
+    dense_index = faiss.read_index(str(dense_index_path))
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print("[INFO] Device:", device)
+
+    print("[INFO] Loading embedding model:", args.embedding_model_name)
+    dense_model = SentenceTransformer(
+        args.embedding_model_name,
+        device=device,
+    )
+
+    reranker = None
+
+    if args.use_reranker:
+        print("[INFO] Loading reranker:", args.reranker_model_name)
+        reranker = CrossEncoder(
+            args.reranker_model_name,
+            max_length=512,
+            device=device,
+        )
+
+    prepared_items = []
+
+    print("\n========== PHASE 1: PREPARE TEST CONTEXTS ==========")
+
+    for idx, item in enumerate(pending_items, start=1):
+        qid = int(item["id"])
+        question = str(item["question"]).strip()
+
+        context_top_k = choose_context_top_k(
+            question=question,
+            qa_module=qa,
+            args=args,
+        )
+
+        print("-" * 100)
+        print(f"[{idx}/{len(pending_items)}] ID:", qid)
+        print("Q:", question)
+        print("Context top k:", context_top_k)
+
+        hybrid_results = hybrid.hybrid_search(
+            query=question,
+            chunks=chunks,
+            bm25=bm25,
+            dense_model=dense_model,
+            dense_index=dense_index,
+            bm25_top_k=args.bm25_top_k,
+            dense_top_k=args.dense_top_k,
+            final_top_k=args.candidate_top_k,
+        )
+
+        results = [dict(r) for r in hybrid_results]
+
+        if reranker is not None:
+            results = qa.rerank_with_loaded_model(
+                query=question,
+                results=results,
+                lookup=lookup,
+                reranker=reranker,
+                max_chars=args.max_reranker_chars,
+            )
+
+            results = qa.blend_ranking(
+                results,
+                hybrid_weight=args.hybrid_weight,
+                reranker_weight=args.reranker_weight,
+            )
+        else:
+            for result in results:
+                result["final_context_score"] = 1.0 / max(result.get("rank", 9999), 1)
+                result["final_context_rank"] = result.get("rank")
+
+            results = sorted(
+                results,
+                key=lambda x: x["final_context_score"],
+                reverse=True,
+            )
+
+        selected = qa.deduplicate_contexts(
+            results=results,
+            top_k=context_top_k,
+        )
+
+        context_blocks = qa.build_context_blocks(
+            selected_results=selected,
+            lookup=lookup,
+            max_context_chars=args.max_context_chars,
+        )
+
+        prompt = qa.build_prompt(
+            question=question,
+            context_blocks=context_blocks,
+        )
+
+        relevant_docs, relevant_articles = make_relevant_fields(
+            contexts=context_blocks,
+            lookup=lookup,
+            max_docs=args.max_docs,
+            max_articles=args.max_articles,
+        )
+
+        print("Top context:", context_blocks[0]["legal_reference_keys"], "|", context_blocks[0]["retrieval_title"])
+        print("Relevant articles:", relevant_articles[:3])
+
+        prepared_items.append({
+            "id": qid,
+            "question": question,
+            "context_top_k": context_top_k,
+            "contexts": context_blocks,
+            "prompt": prompt,
+            "relevant_docs": relevant_docs,
+            "relevant_articles": relevant_articles,
+        })
+
+    print("\n[INFO] Releasing retrieval models before loading LLM")
+
+    del dense_model
+    del dense_index
+    del bm25
+    del chunks
+
+    if reranker is not None:
+        del reranker
+
+    gc.collect()
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    print("\n========== PHASE 2: GENERATE TEST ANSWERS ==========")
+
+    tokenizer, llm = qa.load_llm(
+        model_name=args.llm_model_name,
+        load_in_4bit=bool(args.load_llm_in_4bit),
+    )
+
+    submission_map = dict(existing_outputs)
+    debug_outputs = []
+
+    for idx, item in enumerate(prepared_items, start=1):
+        qid = item["id"]
+        question = item["question"]
+
+        print("-" * 100)
+        print(f"[{idx}/{len(prepared_items)}] ID:", qid)
+        print("Q:", question)
+
+        answer = qa.generate_answer_with_loaded_model(
+            prompt=item["prompt"],
+            tokenizer=tokenizer,
+            model=llm,
+            max_new_tokens=args.max_new_tokens,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            repetition_penalty=args.repetition_penalty,
+        )
+
+        answer = postprocess_answer(answer)
+
+        submission_item = {
+            "id": qid,
+            "question": question,
+            "answer": answer,
+            "relevant_docs": item["relevant_docs"],
+            "relevant_articles": item["relevant_articles"],
+        }
+
+        submission_map[qid] = submission_item
+
+        debug_outputs.append({
+            **submission_item,
+            "context_top_k": item["context_top_k"],
+            "contexts": item["contexts"],
+        })
+
+        print("Relevant docs:", item["relevant_docs"])
+        print("Relevant articles:", item["relevant_articles"])
+        print("Answer preview:", answer[:500])
+
+        if idx % args.save_every == 0:
+            final_outputs = [
+                submission_map[int(x["id"])]
+                for x in test_items
+                if int(x["id"]) in submission_map
+            ]
+
+            save_json(output_file, final_outputs)
+            save_json(debug_file, {
+                "processed": len(final_outputs),
+                "total_requested": len(test_items),
+                "debug_outputs_latest_run": debug_outputs,
+            })
+
+            print("[INFO] Checkpoint saved:", output_file)
+
+    final_outputs = [
+        submission_map[int(x["id"])]
+        for x in test_items
+        if int(x["id"]) in submission_map
+    ]
+
+    save_json(output_file, final_outputs)
+
+    save_json(debug_file, {
+        "processed": len(final_outputs),
+        "total_requested": len(test_items),
+        "llm_model_name": args.llm_model_name,
+        "embedding_model_name": args.embedding_model_name,
+        "reranker_model_name": args.reranker_model_name if args.use_reranker else None,
+        "specific_context_top_k": args.specific_context_top_k,
+        "broad_context_top_k": args.broad_context_top_k,
+        "complex_context_top_k": args.complex_context_top_k,
+        "debug_outputs_latest_run": debug_outputs,
+    })
+
+    print("\n========== TESTSET INFERENCE REPORT ==========")
+    print("Requested questions:", len(test_items))
+    print("Generated outputs  :", len(final_outputs))
+    print("Saved submission   :", output_file)
+    print("Saved debug        :", debug_file)
+    print("==============================================\n")
+
+
+if __name__ == "__main__":
+    main()
