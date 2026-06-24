@@ -138,6 +138,47 @@ def expand_query(query: str) -> str:
             "Thông tư 132/2018/TT-BTC chế độ kế toán doanh nghiệp siêu nhỏ",
         ])   
 
+    # Hóa đơn điện tử - loại hóa đơn
+    if "loại hóa đơn điện tử" in q or "những loại hóa đơn điện tử" in q:
+        expansions.extend([
+            "123/2020/NĐ-CP Điều 3 hóa đơn điện tử có mã của cơ quan thuế hóa đơn điện tử không có mã",
+            "38/2019/QH14 Điều 89 hóa đơn điện tử",
+            "hóa đơn điện tử có mã của cơ quan thuế không có mã của cơ quan thuế",
+        ])
+
+    # Cưỡng chế nợ thuế
+    if "biện pháp cưỡng chế" in q and ("nợ thuế" in q or "cơ quan thuế" in q):
+        expansions.extend([
+            "38/2019/QH14 Điều 125 biện pháp cưỡng chế thi hành quyết định hành chính về quản lý thuế",
+            "trích tiền từ tài khoản khấu trừ tiền lương dừng làm thủ tục hải quan ngừng sử dụng hóa đơn kê biên tài sản thu hồi giấy chứng nhận",
+        ])
+
+    # Biện pháp dân sự SHTT
+    if "biện pháp dân sự" in q and ("sở hữu trí tuệ" in q or "xâm phạm quyền" in q):
+        expansions.extend([
+            "50/2005/QH11 Điều 202 biện pháp dân sự xử lý xâm phạm quyền sở hữu trí tuệ",
+            "buộc chấm dứt hành vi xâm phạm xin lỗi cải chính công khai bồi thường thiệt hại tiêu hủy hàng hóa",
+        ])
+
+    # Hóa đơn sai tên địa chỉ
+    if "hóa đơn điện tử" in q and ("sai tên" in q or "sai địa chỉ" in q):
+        expansions.extend([
+            "123/2020/NĐ-CP Điều 19 xử lý hóa đơn có sai sót sai tên địa chỉ người mua",
+            "sai tên địa chỉ người mua nhưng không sai mã số thuế không phải lập lại hóa đơn",
+        ])
+
+    # Không trả sổ BHXH
+    if "không trả sổ bảo hiểm xã hội" in q or "không trả sổ bhxh" in q:
+        expansions.extend([
+            "12/2022/NĐ-CP Điều 12 không hoàn thành thủ tục xác nhận thời gian đóng bảo hiểm xã hội không trả lại giấy tờ",
+            "chấm dứt hợp đồng lao động trả sổ bảo hiểm xã hội cho người lao động",
+        ])
+
+    # Hình thức xử phạt chính
+    if "hình thức xử phạt chính" in q and ("lao động" in q or "bảo hiểm xã hội" in q):
+        expansions.extend([
+            "12/2022/NĐ-CP Điều 4 hình thức xử phạt biện pháp khắc phục hậu quả cảnh cáo phạt tiền",
+        ])
 
     if not expansions:
         return query
