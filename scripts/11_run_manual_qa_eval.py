@@ -252,8 +252,6 @@ def is_broad_question(question: str) -> bool:
         "nghĩa vụ",
         "điều kiện",
         "nguyên tắc",
-        "thủ tục",
-        "hồ sơ",
         "các trường hợp",
     ]
 
