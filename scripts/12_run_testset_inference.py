@@ -463,6 +463,32 @@ def apply_answer_guard(question: str, answer: str, relevant_articles: list[str])
 
     return answer
 
+def ensure_full_citations_in_answer(answer: str, relevant_articles: list[str]) -> str:
+    answer = answer.strip()
+
+    # Cắt bớt phần căn cứ lặp nếu model tự sinh quá dài/lặp
+    markers = [
+        "\nCăn cứ pháp lý:",
+        "\n[Căn cứ pháp lý]",
+    ]
+
+    for marker in markers:
+        first_pos = answer.find(marker)
+        if first_pos >= 0:
+            answer = answer[:first_pos].strip()
+            break
+
+    if not relevant_articles:
+        return answer
+
+    refs = "\n".join(f"- {ref}" for ref in relevant_articles)
+
+    return (
+        answer.strip()
+        + "\n\nCăn cứ pháp lý:\n"
+        + refs
+    )
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -804,6 +830,12 @@ def main():
             answer=answer,
             relevant_articles=item["relevant_articles"],
         )
+        
+        answer = ensure_full_citations_in_answer(
+            answer=answer,
+            relevant_articles=item["relevant_articles"],
+        )
+        
         submission_item = {
             "id": qid,
             "question": question,
