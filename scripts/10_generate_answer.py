@@ -16,15 +16,55 @@ def save_json(path: Path, data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def extract_legal_refs(contexts: list[dict]) -> list[str]:
-    refs = []
+def extract_legal_refs_used(answer: str, contexts: list[dict]) -> list[str]:
+    """
+    Ưu tiên lấy căn cứ thật sự xuất hiện trong câu trả lời.
+    Nếu không bắt được thì fallback lấy context top 1-3.
+    """
+    used_refs = []
+
+    answer_lower = answer.lower()
 
     for ctx in contexts:
-        for ref in ctx.get("legal_reference_keys", []) or []:
-            if ref and ref not in refs:
-                refs.append(ref)
+        refs = ctx.get("legal_reference_keys", []) or []
+        title = ctx.get("retrieval_title", "") or ""
+        citation = ctx.get("citation", "") or ""
 
-    return refs
+        searchable = " ".join(refs + [title, citation]).lower()
+
+        for ref in refs:
+            ref_lower = ref.lower()
+
+            # Bắt theo mã ref đầy đủ
+            if ref_lower in answer_lower and ref not in used_refs:
+                used_refs.append(ref)
+
+            # Bắt theo Điều + số hiệu văn bản
+            parts = ref.split("|")
+            if len(parts) >= 2:
+                doc_no = parts[0].lower()
+                article = parts[1].lower()
+
+                if doc_no in answer_lower and article in answer_lower and ref not in used_refs:
+                    used_refs.append(ref)
+
+            # Bắt nếu câu trả lời nhắc Điều trong title/citation
+            if ref not in used_refs:
+                if citation and citation.lower() in answer_lower:
+                    used_refs.append(ref)
+
+    if used_refs:
+        return used_refs
+
+    # Fallback: lấy tối đa 3 căn cứ đầu nếu không parse được
+    fallback_refs = []
+
+    for ctx in contexts[:3]:
+        for ref in ctx.get("legal_reference_keys", []) or []:
+            if ref not in fallback_refs:
+                fallback_refs.append(ref)
+
+    return fallback_refs
 
 
 def build_messages(prompt: str):
@@ -232,7 +272,7 @@ def main():
         repetition_penalty=args.repetition_penalty,
     )
 
-    legal_refs = extract_legal_refs(contexts)
+    legal_refs = extract_legal_refs_used(answer, contexts)
 
     output = {
         "question": question,
