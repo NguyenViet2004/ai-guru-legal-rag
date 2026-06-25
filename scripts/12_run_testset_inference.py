@@ -296,7 +296,28 @@ def is_complex_question(question: str) -> bool:
     return False
 
 
-def choose_context_top_k(question: str, qa_module, args) -> int:
+def choose_context_top_k(question: str, qa_module, args, search_queries: list[str] | None = None) -> int:
+    search_queries = search_queries or []
+
+    if len(search_queries) >= 3:
+        return args.complex_context_top_k
+
+    q = question.lower()
+
+    multi_issue_markers = [
+        "đồng thời",
+        "vừa",
+        "ngoài ra",
+        "bên cạnh đó",
+        "và nếu",
+        "thì cần",
+        "như thế nào và",
+        "ra sao và",
+    ]
+
+    if any(m in q for m in multi_issue_markers):
+        return args.complex_context_top_k
+
     if is_complex_question(question):
         return args.complex_context_top_k
 
@@ -386,6 +407,76 @@ def build_retrieval_queries(question: str, max_queries: int = 4) -> list[str]:
             if chunk not in queries:
                 queries.append(chunk)
 
+        targeted_phrases = []
+
+    phrase_rules = [
+        (
+            ["hộ kinh doanh", "lệ phí"],
+            [
+                "thanh toán lệ phí đăng ký hộ kinh doanh",
+                "168/2025/NĐ-CP Điều 97 thanh toán lệ phí đăng ký kinh doanh",
+            ],
+        ),
+        (
+            ["khai thiếu", "thuế"],
+            [
+                "125/2020/NĐ-CP xử phạt hành vi khai sai dẫn đến thiếu số tiền thuế phải nộp",
+                "khai thiếu số tiền thuế phải nộp phạt 20% số tiền thuế thiếu",
+            ],
+        ),
+        (
+            ["trọng tài", "biện pháp khẩn cấp tạm thời"],
+            [
+                "54/2010/QH12 Điều 50 thủ tục áp dụng biện pháp khẩn cấp tạm thời của Hội đồng trọng tài",
+            ],
+        ),
+        (
+            ["trọng tài", "email"],
+            [
+                "54/2010/QH12 thỏa thuận trọng tài hình thức thỏa thuận trọng tài email",
+                "54/2010/QH12 thỏa thuận trọng tài vô hiệu",
+            ],
+        ),
+        (
+            ["quỹ đầu tư khởi nghiệp sáng tạo", "giải thể"],
+            [
+                "38/2018/NĐ-CP quỹ đầu tư khởi nghiệp sáng tạo giải thể quỹ thông báo hồ sơ",
+                "quỹ đầu tư khởi nghiệp sáng tạo chế độ báo cáo kế toán giải thể",
+            ],
+        ),
+        (
+            ["góp vốn bằng tài sản", "tên công ty"],
+            [
+                "59/2020/QH14 góp vốn bằng tài sản biên bản giao nhận tài sản",
+                "59/2020/QH14 tên doanh nghiệp trùng gây nhầm lẫn",
+            ],
+        ),
+        (
+            ["bảo hiểm tai nạn lao động", "khám sức khỏe định kỳ"],
+            [
+                "12/2022/NĐ-CP không đóng bảo hiểm tai nạn lao động bệnh nghề nghiệp",
+                "12/2022/NĐ-CP không tổ chức khám sức khỏe định kỳ cho người lao động",
+                "12/2022/NĐ-CP không thanh toán chi phí y tế cho người lao động bị tai nạn lao động",
+            ],
+        ),
+        (
+            ["hóa đơn", "khai man", "chứng từ"],
+            [
+                "88/2015/QH13 chứng từ kế toán căn cứ ghi sổ kế toán",
+                "88/2015/QH13 hành vi bị nghiêm cấm trong kế toán khai man số liệu",
+                "41/2018/NĐ-CP xử phạt vi phạm hành chính trong lĩnh vực kế toán",
+            ],
+        ),
+    ]
+
+    for required_terms, extra_queries in phrase_rules:
+        if all(term in q.lower() for term in required_terms):
+            targeted_phrases.extend(extra_queries)
+
+    for tq in targeted_phrases:
+        if tq not in queries:
+            queries.append(tq)
+    
     return queries[:max_queries]
 
 
@@ -490,6 +581,12 @@ def run_decomposed_hybrid_search(
     results = merge_ranked_results(
         result_lists=result_lists,
         max_results=final_top_k,
+    )
+    
+    results = restrict_results_by_domain(
+        question=question,
+        results=results,
+        min_keep=5,
     )
 
     return results, search_queries
@@ -672,13 +769,7 @@ def infer_question_domains(question: str) -> set[str]:
     ]):
         domains.add("tourism")
 
-    if any(x in q for x in [
-        "trí tuệ nhân tạo",
-        "hệ thống ai",
-        "công nghệ số",
-        "an ninh mạng",
-        "sự cố nghiêm trọng",
-    ]):
+    if is_explicit_ai_question(q) or any(x in q for x in ["công nghệ số", "an ninh mạng", "sự cố nghiêm trọng"]):
         domains.add("digital_ai")
 
     # "ai" quá ngắn, chỉ nhận khi đứng như một từ riêng
@@ -710,6 +801,63 @@ def infer_question_domains(question: str) -> set[str]:
     ]):
         domains.add("conditional_business")
 
+    if any(x in q for x in [
+        "trọng tài",
+        "hội đồng trọng tài",
+        "trung tâm trọng tài",
+        "thỏa thuận trọng tài",
+        "trọng tài viên",
+        "biện pháp khẩn cấp tạm thời",
+    ]):
+        domains.add("arbitration")
+
+    if any(x in q for x in [
+        "quỹ đầu tư khởi nghiệp sáng tạo",
+        "quỹ đầu tư khởi nghiệp",
+        "công ty thực hiện quản lý quỹ",
+        "nhà đầu tư góp vốn vào quỹ",
+        "giải thể quỹ",
+        "phân chia lợi tức",
+    ]):
+        domains.add("startup_fund")
+
+    if any(x in q for x in [
+        "công ty con",
+        "góp vốn bằng tài sản",
+        "biên bản giao nhận tài sản",
+        "người đại diện theo pháp luật",
+        "hội đồng quản trị",
+        "đại hội đồng cổ đông",
+        "thành viên hội đồng quản trị",
+        "thành viên độc lập",
+        "công ty tnhh",
+        "công ty cổ phần",
+    ]):
+        domains.add("corporate_governance")
+
+    if any(x in q for x in [
+        "khai thiếu số tiền thuế",
+        "khai sai",
+        "trốn thuế",
+        "ấn định thuế",
+        "giảm thuế",
+        "gia hạn nộp thuế",
+        "thuế tiêu thụ đặc biệt",
+        "thuế sử dụng đất phi nông nghiệp",
+        "khai man số liệu",
+    ]):
+        domains.add("tax_invoice")
+
+    if any(x in q for x in [
+        "chứng từ kế toán",
+        "ghi sổ kế toán",
+        "tẩy xóa",
+        "sửa chữa chứng từ",
+        "tài liệu kế toán",
+        "sổ kế toán",
+    ]):
+        domains.add("accounting_audit")
+    
     return domains
 
 
@@ -781,6 +929,7 @@ DOMAIN_DOC_CODES = {
         "88/2015/QH13",
         "67/2011/QH12",
         "41/2018/NĐ-CP",
+        "102/2021/NĐ-CP",
         "133/2016/TT-BTC",
         "132/2018/TT-BTC",
     ],
@@ -826,6 +975,17 @@ DOMAIN_DOC_CODES = {
         "54/2019/NĐ-CP",
         "09/2017/QH14",
         "168/2017/NĐ-CP",
+    ],
+    "arbitration": [
+        "54/2010/QH12"
+    ],
+
+    "startup_fund": [
+        "38/2018/NĐ-CP", "04/2017/QH14", "80/2021/NĐ-CP"
+    ],
+
+    "corporate_governance": [
+        "59/2020/QH14", "168/2025/NĐ-CP"
     ],
 }
 
@@ -1147,7 +1307,133 @@ def ensure_full_citations_in_answer(answer: str, relevant_articles: list[str]) -
         + refs
     )
 
+def is_explicit_ai_question(q: str) -> bool:
+    q = q.lower()
 
+    if any(x in q for x in [
+        "hệ thống ai",
+        "mô hình ai",
+        "ứng dụng ai",
+        "công cụ ai",
+        "trí tuệ nhân tạo",
+        "artificial intelligence",
+        "công nghệ số",
+        "luật công nghiệp công nghệ số",
+    ]):
+        return True
+
+    # Chỉ match AI như một từ độc lập, không match trong "phải", "khai", "tài"
+    return bool(re.search(r"(^|[^a-zà-ỹđ0-9])ai([^a-zà-ỹđ0-9]|$)", q))
+
+def rebalance_after_rerank(question: str, results: list[dict]) -> list[dict]:
+    """
+    Cân bằng lại sau reranker:
+    - Ưu tiên kết quả đúng domain.
+    - Không để hybrid_rank=1 kéo văn bản lạc domain lên đầu nếu reranker đánh thấp.
+    """
+    domains = infer_question_domains(question)
+
+    if not results:
+        return results
+
+    for r in results:
+        hybrid_rank = r.get("hybrid_rank") or r.get("rank") or 9999
+        reranker_rank = r.get("reranker_rank") or 9999
+        decomp_score = float(r.get("_decomp_score", 0.0))
+        domain_bonus = 1.0 if result_belongs_to_domains(r, domains) else 0.0
+
+        # Reciprocal rank nhẹ hơn, tránh hybrid áp đảo
+        hybrid_score = 1.0 / max(hybrid_rank, 1)
+        reranker_score = 1.0 / max(reranker_rank, 1)
+
+        # Nếu query có domain rõ, domain + reranker phải mạnh hơn hybrid
+        if domains:
+            final_score = (
+                0.25 * hybrid_score
+                + 0.45 * reranker_score
+                + 0.20 * domain_bonus
+                + 0.10 * decomp_score
+            )
+        else:
+            final_score = (
+                0.35 * hybrid_score
+                + 0.45 * reranker_score
+                + 0.20 * decomp_score
+            )
+
+        # Phạt mạnh văn bản ngoài domain mà reranker cũng không thích
+        if domains and not result_belongs_to_domains(r, domains) and reranker_rank > 10:
+            final_score *= 0.25
+
+        r["final_context_score"] = final_score
+
+    results = sorted(
+        results,
+        key=lambda x: x.get("final_context_score", 0.0),
+        reverse=True,
+    )
+
+    for idx, r in enumerate(results, start=1):
+        r["final_context_rank"] = idx
+
+    return results
+
+def restrict_results_by_domain(question: str, results: list[dict], min_keep: int = 5) -> list[dict]:
+    """
+    Nếu có đủ kết quả đúng domain, chỉ giữ kết quả đúng domain.
+    Nếu không đủ, giữ nguyên để tránh mất recall.
+    """
+    domains = infer_question_domains(question)
+
+    if not domains:
+        return results
+
+    good = [r for r in results if result_belongs_to_domains(r, domains)]
+
+    if len(good) >= min_keep:
+        return good
+
+    return results
+
+def drop_low_value_amendment_refs(relevant_docs: list[str], relevant_articles: list[str]):
+    """
+    Giảm nhiễu từ các điều sửa đổi tổng quát như Điều 1 của luật sửa đổi,
+    nếu đã có điều gốc cùng nội dung.
+    """
+    if len(relevant_articles) <= 1:
+        return relevant_docs, relevant_articles
+
+    cleaned_articles = []
+    for ref in relevant_articles:
+        ref_lower = ref.lower()
+
+        is_amendment_noise = (
+            ("sửa đổi" in ref_lower or "bổ sung" in ref_lower)
+            and (
+                ref.endswith("|Điều 1")
+                or ref.endswith("|Điều 4")
+                or ref.endswith("|Điều 5")
+            )
+        )
+
+        if is_amendment_noise and len(relevant_articles) > 1:
+            continue
+
+        cleaned_articles.append(ref)
+
+    if not cleaned_articles:
+        cleaned_articles = relevant_articles
+
+    allowed_doc_keys = set(ref.split("|")[0] for ref in cleaned_articles)
+    cleaned_docs = [
+        doc for doc in relevant_docs
+        if doc.split("|")[0] in allowed_doc_keys
+    ]
+
+    if not cleaned_docs:
+        cleaned_docs = relevant_docs
+
+    return cleaned_docs, cleaned_articles
 # ============================================================
 # Main pipeline
 # ============================================================
@@ -1248,6 +1534,7 @@ def main():
     )
 
     parser.add_argument("--save_every", type=int, default=20)
+    parser.add_argument("--max_retrieval_queries", type=int, default=5)
 
     args = parser.parse_args()
 
@@ -1351,10 +1638,13 @@ def main():
         qid = int(item["id"])
         question = str(item["question"]).strip()
 
+        search_queries = build_retrieval_queries(question, max_queries=args.max_retrieval_queries)
+
         context_top_k = choose_context_top_k(
             question=question,
             qa_module=qa,
             args=args,
+            search_queries=search_queries,
         )
 
         print("-" * 100)
@@ -1392,6 +1682,17 @@ def main():
                 results,
                 hybrid_weight=args.hybrid_weight,
                 reranker_weight=args.reranker_weight,
+            )
+            
+            results = rebalance_after_rerank(
+                question=question,
+                results=results,
+            )
+            
+            results = restrict_results_by_domain(
+                question=question,
+                results=results,
+                min_keep=3,
             )
         else:
             for result in results:
@@ -1442,6 +1743,11 @@ def main():
 
         relevant_docs, relevant_articles = filter_relevant_by_domain(
             question=question,
+            relevant_docs=relevant_docs,
+            relevant_articles=relevant_articles,
+        )
+        
+        relevant_docs, relevant_articles = drop_low_value_amendment_refs(
             relevant_docs=relevant_docs,
             relevant_articles=relevant_articles,
         )

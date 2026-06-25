@@ -83,6 +83,7 @@ def expand_query(query: str) -> str:
             "tên doanh nghiệp bằng tiếng nước ngoài tên viết tắt doanh nghiệp",
         ])
 
+    
     if has_any("mã số thuế của doanh nghiệp", "mã số doanh nghiệp"):
         expansions.extend([
             "168/2025/NĐ-CP Điều 8",
@@ -474,7 +475,7 @@ def expand_query(query: str) -> str:
     # =========================
     # AI / công nghệ số / an ninh mạng
     # =========================
-    if has_any("hệ thống ai", "trí tuệ nhân tạo", "ai", "công nghệ số", "sự cố nghiêm trọng", "an ninh mạng"):
+    if is_explicit_ai_question(q) or has_any("an ninh mạng", "sự cố an ninh mạng"):
         expansions.extend([
             "71/2025/QH15 Luật Công nghiệp công nghệ số",
             "71/2025/QH15 Điều 43 quản lý hệ thống trí tuệ nhân tạo",
@@ -490,6 +491,83 @@ def expand_query(query: str) -> str:
             "214/2025/NĐ-CP lựa chọn nhà thầu",
             "đấu thầu mua sắm theo Hiệp định CPTPP",
             "mở thầu biên bản mở thầu hồ sơ nộp muộn đánh giá hồ sơ dự thầu",
+        ])
+
+        # Hộ kinh doanh - lệ phí
+    if "hộ kinh doanh" in q and "lệ phí" in q:
+        expansions.extend([
+            "168/2025/NĐ-CP Điều 97 thanh toán lệ phí đăng ký kinh doanh",
+            "thanh toán lệ phí đăng ký hộ kinh doanh bằng tiền mặt chuyển khoản dịch vụ thanh toán điện tử",
+        ])
+
+    # Thuế - khai thiếu / khai sai
+    if ("khai thiếu" in q or "khai sai" in q) and "thuế" in q:
+        expansions.extend([
+            "125/2020/NĐ-CP xử phạt hành vi khai sai dẫn đến thiếu số tiền thuế phải nộp",
+            "phạt 20% số tiền thuế khai thiếu số tiền thuế phải nộp",
+            "biện pháp khắc phục nộp đủ số tiền thuế thiếu tiền chậm nộp",
+        ])
+
+    # Trọng tài thương mại
+    if "trọng tài" in q:
+        expansions.extend([
+            "54/2010/QH12 Luật Trọng tài thương mại",
+            "54/2010/QH12 Điều 16 hình thức thỏa thuận trọng tài",
+            "54/2010/QH12 Điều 18 thỏa thuận trọng tài vô hiệu",
+            "54/2010/QH12 Điều 35 bản tự bảo vệ của bị đơn",
+            "54/2010/QH12 Điều 40 thành lập Hội đồng trọng tài tại Trung tâm trọng tài",
+            "54/2010/QH12 Điều 50 thủ tục áp dụng biện pháp khẩn cấp tạm thời",
+        ])
+
+    # Quỹ đầu tư khởi nghiệp sáng tạo
+    if "quỹ đầu tư khởi nghiệp sáng tạo" in q:
+        expansions.extend([
+            "38/2018/NĐ-CP quỹ đầu tư khởi nghiệp sáng tạo",
+            "quỹ đầu tư khởi nghiệp sáng tạo giải thể quỹ hồ sơ thông báo",
+            "quỹ đầu tư khởi nghiệp sáng tạo báo cáo hằng năm công khai thông tin đầu tư từ ngân sách địa phương",
+            "quỹ đầu tư khởi nghiệp sáng tạo phân chia lợi tức nhà đầu tư",
+        ])
+
+    # Doanh nghiệp - góp vốn / tên doanh nghiệp / công ty con
+    if (
+        "góp vốn bằng tài sản" in q
+        or "biên bản giao nhận tài sản" in q
+        or "tên công ty" in q
+        or "tên doanh nghiệp" in q
+    ):
+        expansions.extend([
+            "59/2020/QH14 góp vốn bằng tài sản biên bản giao nhận tài sản",
+            "59/2020/QH14 Điều 34 tài sản góp vốn",
+            "59/2020/QH14 Điều 35 chuyển quyền sở hữu tài sản góp vốn",
+            "59/2020/QH14 tên doanh nghiệp trùng tên gây nhầm lẫn",
+            "168/2025/NĐ-CP tên doanh nghiệp trùng gây nhầm lẫn",
+        ])
+
+    # Kế toán - chứng từ / ghi sổ / khai man
+    if (
+        "chứng từ kế toán" in q
+        or "ghi sổ kế toán" in q
+        or "khai man số liệu" in q
+        or "tẩy xóa" in q
+    ):
+        expansions.extend([
+            "88/2015/QH13 Luật Kế toán chứng từ kế toán căn cứ ghi sổ kế toán",
+            "88/2015/QH13 hành vi bị nghiêm cấm trong kế toán khai man tẩy xóa chứng từ kế toán",
+            "41/2018/NĐ-CP xử phạt vi phạm hành chính trong lĩnh vực kế toán kiểm toán độc lập",
+            "102/2021/NĐ-CP sửa đổi xử phạt kế toán kiểm toán độc lập",
+        ])
+
+    # Lao động - bảo hiểm TNLĐ/BNN, khám sức khỏe, tai nạn lao động
+    if (
+        "bảo hiểm tai nạn lao động" in q
+        or "bệnh nghề nghiệp" in q
+        or "khám sức khỏe định kỳ" in q
+        or "chi phí y tế" in q
+    ):
+        expansions.extend([
+            "12/2022/NĐ-CP xử phạt vi phạm an toàn vệ sinh lao động bảo hiểm tai nạn lao động bệnh nghề nghiệp",
+            "12/2022/NĐ-CP không tổ chức khám sức khỏe định kỳ cho người lao động",
+            "84/2015/QH13 Luật An toàn vệ sinh lao động trách nhiệm người sử dụng lao động khi xảy ra tai nạn lao động",
         ])
 
     if not expansions:
@@ -791,7 +869,23 @@ def print_results(query: str, results: list):
         print("Preview    :", r["content_preview"][:350])
 
     print("=" * 120 + "\n")
+def is_explicit_ai_question(q: str) -> bool:
+    q = q.lower()
 
+    if any(x in q for x in [
+        "hệ thống ai",
+        "mô hình ai",
+        "ứng dụng ai",
+        "công cụ ai",
+        "trí tuệ nhân tạo",
+        "artificial intelligence",
+        "công nghệ số",
+        "luật công nghiệp công nghệ số",
+    ]):
+        return True
+
+    # Chỉ match AI như một từ độc lập, không match trong "phải", "khai", "tài"
+    return bool(re.search(r"(^|[^a-zà-ỹđ0-9])ai([^a-zà-ỹđ0-9]|$)", q))
 
 def main():
     parser = argparse.ArgumentParser()
