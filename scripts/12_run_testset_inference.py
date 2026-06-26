@@ -1434,6 +1434,193 @@ def drop_low_value_amendment_refs(relevant_docs: list[str], relevant_articles: l
         cleaned_docs = relevant_docs
 
     return cleaned_docs, cleaned_articles
+
+def rebuild_docs_from_articles(
+    relevant_docs: list[str],
+    relevant_articles: list[str],
+    max_docs: int,
+) -> list[str]:
+    """
+    Bảo đảm mọi doc_no trong relevant_articles đều xuất hiện trong relevant_docs.
+    Nếu doc đã có format đầy đủ trong relevant_docs thì giữ.
+    """
+    doc_map = {}
+
+    for doc in relevant_docs:
+        parts = doc.split("|", 1)
+        if len(parts) == 2:
+            doc_map[parts[0]] = doc
+
+    for article in relevant_articles:
+        parts = article.split("|")
+        if len(parts) >= 3:
+            doc_no = parts[0]
+            doc_name = parts[1]
+            if doc_no not in doc_map:
+                doc_map[doc_no] = f"{doc_no}|{doc_name}"
+
+    ordered_docs = []
+    seen = set()
+
+    for article in relevant_articles:
+        doc_no = article.split("|")[0]
+        if doc_no in doc_map and doc_no not in seen:
+            ordered_docs.append(doc_map[doc_no])
+            seen.add(doc_no)
+
+    return ordered_docs[:max_docs]
+
+def drop_amendment_duplicates(
+    question: str,
+    relevant_docs: list[str],
+    relevant_articles: list[str],
+):
+    """
+    Nếu cùng một nội dung có cả luật gốc và luật sửa đổi,
+    ưu tiên luật gốc, trừ khi câu hỏi hỏi rõ về văn bản sửa đổi/bổ sung.
+    """
+    q = question.lower()
+
+    if any(x in q for x in ["sửa đổi", "bổ sung", "luật sửa đổi", "văn bản sửa đổi"]):
+        return relevant_docs, relevant_articles
+
+    preferred_base_docs = [
+        "50/2005/QH11",
+        "36/2005/QH11",
+        "45/2019/QH14",
+        "59/2020/QH14",
+        "38/2019/QH14",
+        "123/2020/NĐ-CP",
+        "98/2020/NĐ-CP",
+        "125/2020/NĐ-CP",
+    ]
+
+    amendment_like_codes = [
+        "07/2022/QH15",
+        "70/2025/NĐ-CP",
+        "24/2025/NĐ-CP",
+        "102/2021/NĐ-CP",
+    ]
+
+    has_base = any(any(code in ref for code in preferred_base_docs) for ref in relevant_articles)
+
+    if not has_base:
+        return relevant_docs, relevant_articles
+
+    cleaned_articles = []
+
+    for ref in relevant_articles:
+        is_amendment = any(code in ref for code in amendment_like_codes)
+        is_low_value_article = (
+            ref.endswith("|Điều 1")
+            or ref.endswith("|Điều 4")
+            or ref.endswith("|Điều 5")
+        )
+
+        if is_amendment and is_low_value_article:
+            continue
+
+        # Nếu luật gốc cùng điều đã có, bỏ bản sửa đổi cùng số Điều
+        if is_amendment:
+            article = ref.split("|")[-1]
+            base_same_article_exists = any(
+                (base_code in other and other.endswith("|" + article))
+                for base_code in preferred_base_docs
+                for other in relevant_articles
+            )
+            if base_same_article_exists:
+                continue
+
+        cleaned_articles.append(ref)
+
+    if not cleaned_articles:
+        cleaned_articles = relevant_articles
+
+    allowed_doc_nos = set(ref.split("|")[0] for ref in cleaned_articles)
+    cleaned_docs = [
+        doc for doc in relevant_docs
+        if doc.split("|")[0] in allowed_doc_nos
+    ]
+
+    if not cleaned_docs:
+        cleaned_docs = relevant_docs
+
+    return cleaned_docs, cleaned_articles
+
+def dynamic_limit_articles(question: str, relevant_articles: list[str]) -> list[str]:
+    q = question.lower()
+
+    multi_markers = [
+        "đồng thời",
+        "và nếu",
+        "ngoài ra",
+        "bên cạnh đó",
+        "trong trường hợp",
+        "hồ sơ gồm",
+        "trình tự",
+        "thủ tục",
+        "nghĩa vụ gì và",
+        "điều kiện gì và",
+        "xử lý thế nào và",
+    ]
+
+    broad_markers = [
+        "những trường hợp nào",
+        "các trường hợp",
+        "bao gồm những gì",
+        "các biện pháp",
+        "những nội dung gì",
+        "quy định như thế nào",
+    ]
+
+    if any(x in q for x in multi_markers):
+        return relevant_articles[:5]
+
+    if any(x in q for x in broad_markers):
+        return relevant_articles[:3]
+
+    # Câu hỏi cụ thể, thường chỉ cần 1-2 điều
+    return relevant_articles[:2]
+
+def article_title_match_bonus(question: str, result: dict) -> float:
+    q = question.lower()
+    title = str(result.get("retrieval_title", "")).lower()
+    refs = " ".join(result.get("legal_reference_keys", []) or []).lower()
+    text = title + " " + refs
+
+    bonus = 0.0
+
+    phrase_groups = [
+        (["hồ sơ", "đăng ký", "hộ kinh doanh"], ["hồ sơ", "đăng ký", "hộ kinh doanh"]),
+        (["lệ phí", "hộ kinh doanh"], ["lệ phí", "đăng ký"]),
+        (["thỏa thuận trọng tài", "vô hiệu"], ["thỏa thuận trọng tài", "vô hiệu"]),
+        (["biện pháp khẩn cấp tạm thời"], ["biện pháp khẩn cấp tạm thời"]),
+        (["chứng từ kế toán", "ghi sổ"], ["chứng từ kế toán", "sổ kế toán"]),
+        (["khai thiếu", "thuế"], ["khai sai", "thiếu số tiền thuế"]),
+        (["góp vốn bằng tài sản"], ["góp vốn", "tài sản góp vốn", "chuyển quyền sở hữu"]),
+        (["tên doanh nghiệp", "gây nhầm lẫn"], ["tên doanh nghiệp", "trùng", "nhầm lẫn"]),
+        (["quỹ đầu tư khởi nghiệp sáng tạo", "giải thể"], ["quỹ đầu tư khởi nghiệp sáng tạo", "giải thể"]),
+    ]
+
+    for q_terms, title_terms in phrase_groups:
+        if all(term in q for term in q_terms):
+            matched = sum(1 for term in title_terms if term in text)
+            bonus += 0.08 * matched
+
+    return bonus
+
+
+def apply_article_title_bonus(question: str, results: list[dict]) -> list[dict]:
+    for r in results:
+        base = float(r.get("final_context_score", 0.0))
+        r["final_context_score"] = base + article_title_match_bonus(question, r)
+
+    results = sorted(results, key=lambda x: x.get("final_context_score", 0.0), reverse=True)
+
+    for idx, r in enumerate(results, start=1):
+        r["final_context_rank"] = idx
+
+    return results
 # ============================================================
 # Main pipeline
 # ============================================================
@@ -1689,6 +1876,11 @@ def main():
                 results=results,
             )
             
+            results = apply_article_title_bonus(
+                question=question,
+                results=results,
+            )
+            
             results = restrict_results_by_domain(
                 question=question,
                 results=results,
@@ -1740,8 +1932,31 @@ def main():
             max_docs=args.max_docs,
             max_articles=args.max_articles,
         )
+        
+        relevant_articles = dynamic_limit_articles(
+            question=question,
+            relevant_articles=relevant_articles,
+        )
+        
+        relevant_docs = rebuild_docs_from_articles(
+            relevant_docs=relevant_docs,
+            relevant_articles=relevant_articles,
+            max_docs=args.max_docs,
+        )
 
         relevant_docs, relevant_articles = filter_relevant_by_domain(
+            question=question,
+            relevant_docs=relevant_docs,
+            relevant_articles=relevant_articles,
+        )
+        
+        relevant_docs = rebuild_docs_from_articles(
+            relevant_docs=relevant_docs,
+            relevant_articles=relevant_articles,
+            max_docs=args.max_docs,
+        )
+        
+        relevant_docs, relevant_articles = drop_amendment_duplicates(
             question=question,
             relevant_docs=relevant_docs,
             relevant_articles=relevant_articles,
