@@ -304,12 +304,31 @@ def expand_query(query: str) -> str:
     # =========================
     # Luật Thương mại - hợp đồng, chế tài, giao hàng, đại lý, nhượng quyền
     # =========================
-    if has_any(
-        "hợp đồng thương mại", "phạt vi phạm", "bồi thường thiệt hại", "chế tài",
-        "giao hàng", "thanh toán", "bên bán", "bên mua", "đại lý", "môi giới thương mại",
-        "nhượng quyền thương mại", "hội chợ", "triển lãm thương mại", "khuyến mại",
-        "gia công hàng hóa", "sở giao dịch hàng hóa"
-    ):
+    commercial_context = has_any(
+        "luật thương mại",
+        "hợp đồng thương mại",
+        "mua bán hàng hóa",
+        "mua bán hàng hoá",
+        "bên bán",
+        "bên mua",
+        "giao hàng",
+        "giao hàng hóa",
+        "giao hàng hoá",
+        "thanh toán hàng hóa",
+        "thanh toán hàng hoá",
+        "đại lý thương mại",
+        "môi giới thương mại",
+        "nhượng quyền thương mại",
+        "hội chợ",
+        "triển lãm thương mại",
+        "khuyến mại",
+        "gia công hàng hóa",
+        "gia công hàng hoá",
+        "sở giao dịch hàng hóa",
+        "sở giao dịch hàng hoá",
+    )
+
+    if commercial_context:
         expansions.extend([
             "36/2005/QH11 Luật Thương mại",
             "36/2005/QH11 Điều 292 các loại chế tài trong thương mại",
@@ -330,6 +349,16 @@ def expand_query(query: str) -> str:
             "36/2005/QH11 Điều 175 nghĩa vụ của bên đại lý",
             "36/2005/QH11 Điều 177 thời hạn đại lý",
             "36/2005/QH11 Điều 289 nghĩa vụ của thương nhân nhận quyền",
+        ])
+
+    # Chỉ mở rộng phạt vi phạm/bồi thường theo Luật Thương mại khi câu hỏi có ngữ cảnh thương mại rõ.
+    if commercial_context and has_any("phạt vi phạm", "bồi thường thiệt hại", "chế tài"):
+        expansions.extend([
+            "36/2005/QH11 Điều 292 chế tài trong thương mại",
+            "36/2005/QH11 Điều 300 phạt vi phạm",
+            "36/2005/QH11 Điều 301 mức phạt vi phạm",
+            "36/2005/QH11 Điều 302 bồi thường thiệt hại",
+            "36/2005/QH11 Điều 307 quan hệ giữa phạt vi phạm và bồi thường thiệt hại",
         ])
 
     # =========================
@@ -869,23 +898,47 @@ def print_results(query: str, results: list):
         print("Preview    :", r["content_preview"][:350])
 
     print("=" * 120 + "\n")
-def is_explicit_ai_question(q: str) -> bool:
-    q = q.lower()
+def is_explicit_ai_question(text: str) -> bool:
+    """
+    Chỉ nhận AI khi là ngữ cảnh công nghệ thật sự.
+    Không match chữ "ai" tiếng Việt trong câu hỏi kiểu "ai phải nộp",
+    vì điều đó kéo nhầm sang Luật Công nghiệp công nghệ số.
+    """
+    raw = str(text or "")
+    q = raw.lower()
 
-    if any(x in q for x in [
+    explicit_phrases = [
         "hệ thống ai",
         "mô hình ai",
         "ứng dụng ai",
         "công cụ ai",
+        "sản phẩm ai",
         "trí tuệ nhân tạo",
         "artificial intelligence",
-        "công nghệ số",
+        "công nghiệp công nghệ số",
         "luật công nghiệp công nghệ số",
-    ]):
+    ]
+
+    if any(x in q for x in explicit_phrases):
         return True
 
-    # Chỉ match AI như một từ độc lập, không match trong "phải", "khai", "tài"
-    return bool(re.search(r"(^|[^a-zà-ỹđ0-9])ai([^a-zà-ỹđ0-9]|$)", q))
+    # Chỉ nhận acronym AI viết hoa và phải có ngữ cảnh công nghệ.
+    if re.search(r"(^|[^A-Za-z])AI([^A-Za-z]|$)", raw):
+        tech_context = [
+            "hệ thống",
+            "mô hình",
+            "ứng dụng",
+            "công nghệ",
+            "dữ liệu",
+            "thuật toán",
+            "huấn luyện",
+            "rủi ro",
+            "phân loại",
+            "triển khai",
+        ]
+        return any(x in q for x in tech_context)
+
+    return False
 
 def main():
     parser = argparse.ArgumentParser()
