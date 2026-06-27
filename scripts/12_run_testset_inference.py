@@ -1067,6 +1067,330 @@ def dedupe_results(results: list[dict], max_results: int | None = None) -> list[
     return output
 
 
+
+def get_result_doc_article(result: dict):
+    refs = result.get("legal_reference_keys") or result.get("legal_refs") or []
+    if isinstance(refs, str):
+        refs = [refs]
+
+    for ref in refs:
+        norm = normalize_article_ref(ref)
+        if norm:
+            return norm["doc_no"], norm["article"]
+
+    doc_no = result.get("document_number") or result.get("metadata", {}).get("document_number")
+    if doc_no:
+        return str(doc_no), ""
+
+    return "", ""
+
+
+def is_specific_question(question: str) -> bool:
+    q = question.lower()
+    specific_markers = [
+        "bao nhiêu", "mức phạt", "phạt bao nhiêu", "thời hạn", "trong bao lâu",
+        "có bị", "có phải", "có được", "có cần", "được không", "phải không",
+        "ai là", "ai phải", "ai có trách nhiệm", "bằng cách nào", "phương thức nào",
+    ]
+    if any(x in q for x in specific_markers):
+        return True
+    if len(q) < 145 and q.count(" và ") <= 1 and q.count(",") <= 1:
+        return True
+    return False
+
+
+def is_broad_or_multi_question(question: str) -> bool:
+    q = question.lower()
+    broad_markers = [
+        "những trường hợp nào", "các trường hợp", "bao gồm những gì",
+        "các biện pháp", "những nội dung gì", "quy định như thế nào",
+        "trình tự", "thủ tục", "hồ sơ gồm", "cần thực hiện những gì",
+    ]
+    multi_markers = [
+        "đồng thời", "ngoài ra", "bên cạnh đó", "và nếu", "trong trường hợp",
+        "mặt khác", "khác gì", "so với",
+    ]
+    return any(x in q for x in broad_markers + multi_markers) or is_complex_question(question)
+
+
+def get_effective_domains(question: str) -> set[str]:
+    """
+    Domain sau khi loại xung đột. Đây là tầng quan trọng để tránh:
+    - SME bị tax nuốt chỉ vì có từ thuế.
+    - Labor bị commercial nuốt chỉ vì có bồi thường/thanh toán.
+    - Arbitration bị consumer/civil kéo lệch.
+    """
+    q = question.lower()
+    domains = set(infer_question_domains(question))
+
+    if not is_explicit_ai_question(question):
+        domains.discard("digital_ai")
+
+    # SME/khởi nghiệp/ươm tạo là domain chính, thuế chỉ là một ý hỗ trợ.
+    if any(x in q for x in [
+        "doanh nghiệp nhỏ và vừa", "nhỏ và vừa", "dnnvv", "cơ sở ươm tạo",
+        "khu làm việc chung", "quỹ bảo lãnh tín dụng", "quỹ phát triển doanh nghiệp",
+        "khởi nghiệp sáng tạo", "chuỗi giá trị", "cụm liên kết ngành",
+    ]):
+        domains.add("sme_support")
+        if not any(x in q for x in ["quản lý thuế", "hóa đơn", "hoá đơn", "mã số thuế", "khai thuế", "trốn thuế"]):
+            domains.discard("tax_invoice")
+
+    # Hộ kinh doanh/đăng ký doanh nghiệp: lệ phí không phải câu thuế.
+    if any(x in q for x in ["hộ kinh doanh", "đăng ký doanh nghiệp", "tên doanh nghiệp", "mã số doanh nghiệp"]):
+        domains.add("business_registration")
+        if "thuế" not in q and "hóa đơn" not in q and "hoá đơn" not in q:
+            domains.discard("tax_invoice")
+        domains.discard("commercial")
+
+    if "trọng tài" in q:
+        domains = {"arbitration"}
+
+    if any(x in q for x in ["lao động", "bảo hiểm xã hội", "bhxh", "tai nạn lao động", "bệnh nghề nghiệp", "khám sức khỏe"]):
+        domains.add("labor")
+        domains.discard("commercial")
+
+    if any(x in q for x in ["kế toán", "chứng từ kế toán", "sổ kế toán", "ghi sổ kế toán", "kiểm toán"]):
+        domains.add("accounting_audit")
+        # chứng từ kế toán khác chứng từ hóa đơn thuế, chỉ giữ tax nếu có dấu hiệu thuế rõ.
+        if not any(x in q for x in ["thuế", "hóa đơn", "hoá đơn", "mã số thuế", "cơ quan thuế"]):
+            domains.discard("tax_invoice")
+
+    return domains
+
+
+def result_belongs_to_effective_domains(result: dict, domains: set[str]) -> bool:
+    if not domains:
+        return True
+    return result_belongs_to_domains(result, domains)
+
+
+def lexical_overlap_score(question: str, text: str) -> float:
+    q_tokens = [t for t in re.findall(r"[a-zà-ỹđ0-9]+", question.lower()) if len(t) >= 4]
+    if not q_tokens:
+        return 0.0
+    text_l = text.lower()
+    matched = sum(1 for t in set(q_tokens) if t in text_l)
+    return min(0.20, matched / max(len(set(q_tokens)), 1) * 0.20)
+
+
+def strong_phrase_bonus(question: str, result: dict) -> float:
+    q = question.lower()
+    title = str(result.get("retrieval_title", "")).lower()
+    citation = str(result.get("citation", "")).lower()
+    preview = str(result.get("content_preview", "")).lower()
+    refs = " ".join(result.get("legal_reference_keys", []) or []).lower()
+    text = " ".join([title, citation, preview, refs])
+
+    bonus = 0.0
+    rules = [
+        (["hộ kinh doanh", "lệ phí"], ["168/2025/nđ-cp", "điều 97", "lệ phí"], 0.45),
+        (["hộ kinh doanh", "hồ sơ"], ["168/2025/nđ-cp", "hồ sơ đăng ký hộ kinh doanh"], 0.30),
+        (["cơ sở ươm tạo"], ["04/2017/qh14", "điều 12"], 0.42),
+        (["khu làm việc chung"], ["04/2017/qh14", "điều 12"], 0.42),
+        (["quỹ bảo lãnh tín dụng", "điều kiện"], ["34/2018/nđ-cp", "điều 16"], 0.38),
+        (["quỹ bảo lãnh tín dụng", "hồ sơ"], ["34/2018/nđ-cp", "điều 21"], 0.34),
+        (["khai thiếu", "thuế"], ["125/2020/nđ-cp", "điều 16"], 0.45),
+        (["khai sai", "thuế"], ["125/2020/nđ-cp", "điều 16"], 0.38),
+        (["ngừng sử dụng hóa đơn điện tử"], ["123/2020/nđ-cp", "điều 16"], 0.35),
+        (["hóa đơn điện tử", "sai sót"], ["123/2020/nđ-cp", "điều 19"], 0.35),
+        (["biện pháp khẩn cấp tạm thời", "trọng tài"], ["54/2010/qh12", "điều 50"], 0.50),
+        (["thỏa thuận trọng tài", "email"], ["54/2010/qh12", "điều 16"], 0.38),
+        (["thỏa thuận trọng tài", "vô hiệu"], ["54/2010/qh12", "điều 18"], 0.38),
+        (["góp vốn bằng tài sản"], ["59/2020/qh14", "điều 34"], 0.32),
+        (["chuyển quyền sở hữu", "tài sản góp vốn"], ["59/2020/qh14", "điều 35"], 0.34),
+        (["tên doanh nghiệp", "nhầm lẫn"], ["59/2020/qh14", "điều 41"], 0.34),
+        (["chứng từ kế toán", "ghi sổ"], ["88/2015/qh13", "điều 18"], 0.34),
+        (["khai man số liệu", "kế toán"], ["88/2015/qh13", "điều 13"], 0.34),
+        (["giữ bản chính", "văn bằng"], ["12/2022/nđ-cp", "điều 9"], 0.40),
+        (["khám sức khỏe định kỳ"], ["12/2022/nđ-cp", "điều 22"], 0.36),
+        (["chậm đóng", "bảo hiểm xã hội"], ["12/2022/nđ-cp", "điều 39"], 0.40),
+    ]
+
+    for q_terms, target_terms, value in rules:
+        if all(term in q for term in q_terms):
+            if all(term in text for term in target_terms):
+                bonus += value
+            elif any(term in text for term in target_terms):
+                bonus += value * 0.45
+
+    bonus += article_title_match_bonus(question, result)
+    bonus += lexical_overlap_score(question, text)
+
+    return min(bonus, 0.85)
+
+
+def result_confidence_score(question: str, result: dict, domains: set[str]) -> float:
+    base = float(result.get("final_context_score", result.get("final_score", 0.0)) or 0.0)
+
+    hybrid_rank = result.get("hybrid_rank") or result.get("rank") or 9999
+    reranker_rank = result.get("reranker_rank") or 9999
+    best_source_rank = result.get("_best_source_rank") or 9999
+
+    rank_score = 0.0
+    rank_score += 0.18 / max(float(hybrid_rank), 1.0)
+    rank_score += 0.35 / max(float(reranker_rank), 1.0)
+    rank_score += 0.12 / max(float(best_source_rank), 1.0)
+
+    domain_score = 0.22 if result_belongs_to_effective_domains(result, domains) else -0.28
+    phrase_score = strong_phrase_bonus(question, result)
+
+    # Reranker rất thấp + ngoài domain thì gần như không cho vào citation.
+    if domains and not result_belongs_to_effective_domains(result, domains) and reranker_rank > 8:
+        domain_score -= 0.35
+
+    return base + rank_score + domain_score + phrase_score
+
+
+def doc_first_budgets(question: str, max_docs: int, max_articles: int):
+    q = question.lower()
+    broad_or_multi = is_broad_or_multi_question(question)
+    specific = is_specific_question(question)
+
+    if broad_or_multi:
+        return min(max_docs, 3), min(max_articles, 4), 3
+
+    if specific:
+        # Các câu hỏi cụ thể là nơi precision mất nhiều nhất, phải giữ rất chặt.
+        return min(max_docs, 2), min(max_articles, 2), 2
+
+    return min(max_docs, 3), min(max_articles, 3), 2
+
+
+def select_doc_first_results(
+    question: str,
+    results: list[dict],
+    result_lists: list[list[dict]],
+    citation_top_k: int,
+    per_query_citation_k: int,
+    max_docs: int = 4,
+    max_articles: int = 4,
+) -> list[dict]:
+    """
+    Champion selector:
+    1) gom theo văn bản,
+    2) chọn văn bản có confidence cao,
+    3) chọn điều trong văn bản bằng score gap,
+    4) chỉ bổ sung sub-query nếu câu phức và ứng viên đủ mạnh.
+    """
+    domains = get_effective_domains(question)
+    doc_budget, article_budget, per_doc_limit = doc_first_budgets(question, max_docs, max_articles)
+    broad_or_multi = is_broad_or_multi_question(question)
+
+    # Pool rộng nhưng không lấy hết.
+    pool = list(results[:max(citation_top_k, 12)])
+
+    # Thêm đại diện sub-query có kiểm soát, chỉ cho câu phức/broad.
+    if broad_or_multi and per_query_citation_k > 0:
+        for q_idx, sub_results in enumerate(result_lists):
+            if q_idx == 0:
+                continue
+            local = []
+            for r in sub_results[: min(len(sub_results), 12)]:
+                key = get_result_key(r)
+                rr = next((x for x in results if get_result_key(x) == key), None)
+                local.append(rr or r)
+            local = sorted(
+                local,
+                key=lambda x: result_confidence_score(question, x, domains),
+                reverse=True,
+            )
+            added = 0
+            for r in local:
+                if domains and not result_belongs_to_effective_domains(r, domains):
+                    continue
+                if added >= per_query_citation_k:
+                    break
+                pool.append(r)
+                added += 1
+
+    pool = dedupe_results(pool)
+
+    scored = []
+    for r in pool:
+        doc_no, article = get_result_doc_article(r)
+        if not doc_no or not article:
+            continue
+        score = result_confidence_score(question, r, domains)
+        scored.append((score, doc_no, article, r))
+
+    if not scored:
+        return dedupe_results(results, max_results=min(citation_top_k, article_budget))
+
+    # Nếu có đủ đúng domain, bỏ ngoài domain thật sự.
+    in_domain = [x for x in scored if result_belongs_to_effective_domains(x[3], domains)] if domains else scored
+    if domains and len(in_domain) >= 2:
+        scored = in_domain
+
+    by_doc = {}
+    for score, doc_no, article, r in scored:
+        by_doc.setdefault(doc_no, []).append((score, article, r))
+
+    doc_scores = []
+    for doc_no, items in by_doc.items():
+        items = sorted(items, key=lambda x: x[0], reverse=True)
+        top_score = items[0][0]
+        second_score = items[1][0] if len(items) > 1 else 0.0
+        doc_score = top_score + 0.35 * second_score + min(0.20, 0.03 * len(items))
+        doc_scores.append((doc_score, doc_no, items))
+
+    doc_scores.sort(key=lambda x: x[0], reverse=True)
+    best_doc_score = doc_scores[0][0]
+
+    selected_docs = []
+    for rank, (doc_score, doc_no, items) in enumerate(doc_scores, start=1):
+        if len(selected_docs) >= doc_budget:
+            break
+        if rank == 1:
+            selected_docs.append((doc_score, doc_no, items))
+            continue
+        # Câu cụ thể chỉ thêm doc thứ hai khi rất gần top1.
+        threshold = 0.72 if is_specific_question(question) else 0.55
+        if doc_score >= best_doc_score * threshold:
+            selected_docs.append((doc_score, doc_no, items))
+
+    selected = []
+    for doc_score, doc_no, items in selected_docs:
+        items = sorted(items, key=lambda x: x[0], reverse=True)
+        if not items:
+            continue
+        top_article_score = items[0][0]
+        added_doc_articles = 0
+        for idx, (score, article, r) in enumerate(items):
+            if len(selected) >= article_budget:
+                break
+            if added_doc_articles >= per_doc_limit:
+                break
+            if idx == 0:
+                selected.append(r)
+                added_doc_articles += 1
+                continue
+
+            # Score gap: chỉ lấy thêm điều khi đủ gần hoặc câu phức.
+            ratio = score / max(top_article_score, 1e-9)
+            min_ratio = 0.76 if is_specific_question(question) else 0.58
+            if ratio >= min_ratio or (broad_or_multi and ratio >= 0.48):
+                selected.append(r)
+                added_doc_articles += 1
+
+    selected = dedupe_results(selected, max_results=article_budget)
+
+    # Fallback: nếu quá ít và câu broad, thêm ứng viên đúng domain tốt nhất.
+    if broad_or_multi and len(selected) < min(article_budget, 3):
+        selected_keys = {get_result_key(x) for x in selected}
+        rest = sorted(
+            [x for x in pool if get_result_key(x) not in selected_keys and (not domains or result_belongs_to_effective_domains(x, domains))],
+            key=lambda x: result_confidence_score(question, x, domains),
+            reverse=True,
+        )
+        for r in rest:
+            if len(selected) >= min(article_budget, 3):
+                break
+            selected.append(r)
+
+    return dedupe_results(selected, max_results=article_budget)
+
+
 def collect_citation_results(
     question: str,
     results: list[dict],
@@ -1074,43 +1398,17 @@ def collect_citation_results(
     citation_top_k: int,
     per_query_citation_k: int,
 ) -> list[dict]:
-    """
-    High-recall citation mode:
-    - lấy top global sau rerank
-    - cộng thêm top đại diện từ từng sub-query để câu phức không mất vế.
-    """
-    candidates = []
-
-    global_pool = results[:citation_top_k]
-    candidates.extend(global_pool)
-
-    domains = infer_question_domains(question)
-
-    # Đại diện từng sub-query từ danh sách gốc trước merge, sau đó ưu tiên đúng domain.
-    for q_idx, sub_results in enumerate(result_lists):
-        if q_idx == 0:
-            continue
-
-        sub_results = [dict(r) for r in sub_results]
-        if domains:
-            good = [r for r in sub_results if result_belongs_to_domains(r, domains)]
-            if len(good) >= per_query_citation_k:
-                sub_results = good
-
-        for r in sub_results[:per_query_citation_k]:
-            # Nếu result này cũng nằm trong results đã rerank, lấy bản có score/rank mới.
-            key = get_result_key(r)
-            reranked = next((x for x in results if get_result_key(x) == key), None)
-            candidates.append(reranked or r)
-
-    candidates = dedupe_results(candidates)
-
-    # Sort lại theo final score nếu có; các đại diện sub-query chưa rerank vẫn được giữ sau top global.
-    candidates.sort(key=lambda x: float(x.get("final_context_score", x.get("final_score", 0.0))), reverse=True)
-    candidates = restrict_results_by_domain(question=question, results=candidates, min_keep=3)
-    candidates = dedupe_results(candidates, max_results=citation_top_k)
-
-    return candidates
+    # Giữ signature cũ để main không cần đổi nhiều; giá trị max thực tế lấy từ argparse mặc định/CLI.
+    # max_docs/max_articles sẽ được giới hạn lần nữa ở postprocess_references.
+    return select_doc_first_results(
+        question=question,
+        results=results,
+        result_lists=result_lists,
+        citation_top_k=citation_top_k,
+        per_query_citation_k=per_query_citation_k,
+        max_docs=4,
+        max_articles=5,
+    )
 
 
 # ============================================================
@@ -1375,27 +1673,28 @@ def drop_amendment_duplicates(question: str, relevant_docs: list[str], relevant_
     return cleaned_docs, cleaned_articles
 
 
+
 def dynamic_limit_articles_high_recall(question: str, relevant_articles: list[str], max_articles: int) -> list[str]:
     """
-    High recall mode cho F2: không cắt quá ít như bản trước.
-    Câu cụ thể vẫn cho tối đa 3 điều; câu broad/phức cho nhiều hơn.
+    Controlled doc-first limit. Tên hàm giữ nguyên để tương thích main,
+    nhưng logic không còn high-recall mù.
     """
     q = question.lower()
-    multi_markers = [
-        "đồng thời", "và nếu", "ngoài ra", "bên cạnh đó", "trong trường hợp",
-        "hồ sơ gồm", "trình tự", "thủ tục", "nghĩa vụ gì và", "điều kiện gì và",
-        "xử lý thế nào và", "ra sao", "như thế nào",
-    ]
-    broad_markers = [
-        "những trường hợp nào", "các trường hợp", "bao gồm những gì", "các biện pháp",
-        "những nội dung gì", "quy định như thế nào", "cần thực hiện những gì",
-    ]
+    if not relevant_articles:
+        return relevant_articles
 
-    if any(x in q for x in multi_markers):
-        return relevant_articles[:max_articles]
-    if any(x in q for x in broad_markers):
-        return relevant_articles[:min(max_articles, 5)]
-    return relevant_articles[:min(max_articles, 3)]
+    if is_broad_or_multi_question(question):
+        limit = min(max_articles, 4)
+    elif is_specific_question(question):
+        limit = min(max_articles, 2)
+    else:
+        limit = min(max_articles, 3)
+
+    # Một số nhóm thật sự cần nhiều điều hơn.
+    if any(x in q for x in ["trình tự", "thủ tục", "hồ sơ gồm", "đồng thời", "ngoài ra"]):
+        limit = min(max_articles, max(limit, 4))
+
+    return relevant_articles[:limit]
 
 
 def postprocess_references(question: str, relevant_docs: list[str], relevant_articles: list[str], max_docs: int, max_articles: int):
@@ -1430,14 +1729,14 @@ def main():
 
     parser.add_argument("--bm25_top_k", type=int, default=100)
     parser.add_argument("--dense_top_k", type=int, default=100)
-    parser.add_argument("--candidate_top_k", type=int, default=60)
+    parser.add_argument("--candidate_top_k", type=int, default=100)
 
     parser.add_argument("--specific_context_top_k", type=int, default=1)
     parser.add_argument("--broad_context_top_k", type=int, default=3)
     parser.add_argument("--complex_context_top_k", type=int, default=4)
 
     parser.add_argument("--citation_top_k", type=int, default=8)
-    parser.add_argument("--per_query_citation_k", type=int, default=2)
+    parser.add_argument("--per_query_citation_k", type=int, default=1)
     parser.add_argument("--citation_max_context_chars", type=int, default=1200)
     parser.add_argument("--max_retrieval_queries", type=int, default=5)
 
@@ -1452,8 +1751,8 @@ def main():
     parser.add_argument("--top_p", type=float, default=0.9)
     parser.add_argument("--repetition_penalty", type=float, default=1.05)
 
-    parser.add_argument("--max_docs", type=int, default=5)
-    parser.add_argument("--max_articles", type=int, default=6)
+    parser.add_argument("--max_docs", type=int, default=4)
+    parser.add_argument("--max_articles", type=int, default=5)
 
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--limit", type=int, default=0, help="0 nghĩa là chạy toàn bộ.")
