@@ -1,0 +1,33 @@
+name: article_level_doc_first_v2
+description: Article-level retrieval and reranking pipeline based on chunk_v4.
+
+public_score:
+  articles_f2macro: 0.5322
+  docs_f2macro: 0.6274
+  articles_precision: 0.4253
+  articles_recall: 0.6197
+  docs_precision: 0.5850
+  docs_recall: 0.6633
+
+models:
+  embedding_model_name: BAAI/bge-m3
+  reranker_model_name: BAAI/bge-reranker-v2-m3
+  use_reranker: true
+
+retrieval:
+  dense_top_k: 90
+  bm25_top_k: 90
+  prefilter_top_k: 64
+  rerank_top_k: 48
+  max_subqueries: 4
+
+selection:
+  unit: article
+  strategy: doc_first_article_level
+  dynamic_budget: true
+  default_articles: 2_to_3
+  complex_articles: 3_to_5
+  save_every: 2
+
+outputs:
+  submission_zip: submission_article_level_doc_first_v2.zip

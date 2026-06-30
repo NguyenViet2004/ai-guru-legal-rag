@@ -1,0 +1,29 @@
+name: doc_first_v1
+description: Previous chunk-level doc-first retrieval baseline.
+
+public_score:
+  articles_f2macro: 0.5041
+  docs_f2macro: 0.5681
+  articles_precision: 0.5017
+  articles_recall: 0.5280
+  docs_precision: 0.5700
+  docs_recall: 0.5800
+
+models:
+  embedding_model_name: BAAI/bge-m3
+  reranker_model_name: BAAI/bge-reranker-v2-m3
+  use_reranker: true
+
+retrieval:
+  bm25_top_k: 100
+  dense_top_k: 100
+  candidate_top_k: 80
+  citation_top_k: 8
+  per_query_citation_k: 1
+  max_retrieval_queries: 5
+
+selection:
+  unit: chunk
+  strategy: doc_first
+  max_docs: 4
+  max_articles: 5
